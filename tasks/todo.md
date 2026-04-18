@@ -1,3 +1,70 @@
+# PropAI landing redesign integration plan
+
+## Discovery + constraints
+
+- [x] Read `CLAUDE.md` and follow plan-first workflow.
+- [x] Read current `src/App.jsx` to preserve existing app logic.
+- [x] Read `main.jsx`.
+- [x] Attempt to read `index.html` (file is currently missing from repository).
+- [x] Confirm required behavior to preserve:
+  - existing `/api/analyze` POST flow in `sendMsg`
+  - existing form input + submit handlers
+  - existing response rendering and error states
+  - existing paywall/free-limit logic
+
+## Styling approach decision
+
+- [x] Choose CSS strategy: use a scoped `<style>` block inside `src/App.jsx` for the new landing markup.
+- [x] Rationale captured:
+  - HTML provided is full class-based CSS (large + structured), so direct class migration is safest.
+  - Avoids introducing new dependencies (`styled-components`) or a Tailwind migration.
+  - Keeps integration localized to `src/App.jsx` without changing app architecture.
+
+## Implementation plan (do after user says "go")
+
+- [ ] Refactor `Landing` from `React.createElement` to JSX in `src/App.jsx` using the provided design structure.
+- [ ] Port Google Fonts (`Instrument Serif`, `Manrope`, `JetBrains Mono`) via CSS import in the landing style block.
+- [ ] Include all 10 required sections in landing JSX:
+  - [ ] Nav
+  - [ ] Hero
+  - [ ] Trust strip
+  - [ ] Why
+  - [ ] Demo
+  - [ ] Features
+  - [ ] Compare
+  - [ ] Proof
+  - [ ] Pricing
+  - [ ] Final
+  - [ ] Footer
+- [ ] Wire CTA actions to existing analyse flow:
+  - [ ] `Analyse a Property →` triggers existing app entry/analyse journey (uses current `onStart` + analysis UI flow).
+  - [ ] `Analyse a Property Now →` triggers the same existing analyse journey.
+- [ ] Preserve all existing app logic untouched outside landing UI scope:
+  - [ ] `sendMsg` request body + timeout/error handling
+  - [ ] chat input and quick actions behavior
+  - [ ] result rendering (`renderText`)
+  - [ ] free/pro upgrade behavior
+- [ ] Ensure section anchor links (`#why`, `#demo`, `#features`, `#pricing`, `#final`) work with JSX ids.
+- [ ] Keep accessibility-safe button usage where actions are local (replace non-functional `href="#"` CTAs with buttons where appropriate).
+- [ ] Run lint diagnostics for edited files and fix any introduced issues.
+
+## Verification plan (do after implementation)
+
+- [ ] Manual flow check:
+  - [ ] Landing renders with new design and typography.
+  - [ ] Clicking primary CTA moves user into existing analysis app screen.
+  - [ ] Submit test prompt and verify `/api/analyze` response renders.
+  - [ ] Busy/searching/error states still behave correctly.
+- [ ] Regression check:
+  - [ ] Free-limit/paywall behavior unchanged.
+  - [ ] Upgrade action still opens Stripe link and toggles Pro state.
+  - [ ] No layout-breaking issues on common responsive breakpoints.
+
+## Review section (to fill after implementation)
+
+- [ ] Document exact files changed and why.
+- [ ] Document verification results + residual risks.
+
 # PropAI build failure recovery plan
 
 ## Investigation findings
