@@ -65,13 +65,22 @@ function stripPropaiCompareBlock(text) {
   return s;
 }
 
+function normalizeComparePayload(data) {
+  if (!data || typeof data !== "object") return data;
+  const o = { ...data };
+  if (!o.suburb1 && o.Suburb1) o.suburb1 = o.Suburb1;
+  if (!o.suburb2 && o.Suburb2) o.suburb2 = o.Suburb2;
+  return o;
+}
+
 function tryParseCompareJsonBlob(inner) {
   let raw = String(inner || "").trim();
   raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   raw = raw.replace(/[\u201c\u201d]/g, '"').replace(/[\u2018\u2019]/g, "'");
   const tryJson = (s) => {
     try {
-      return JSON.parse(s);
+      const d = JSON.parse(s);
+      return normalizeComparePayload(d);
     } catch {
       return null;
     }
@@ -87,6 +96,47 @@ function tryParseCompareJsonBlob(inner) {
     slice = slice.replace(/,\s*([\]}])/g, "$1");
     data = tryJson(slice);
     if (data?.suburb1 && data?.suburb2) return data;
+  }
+  return null;
+}
+
+/** Find balanced { ... } for compare JSON (respects strings so } inside values does not break). */
+function findCompareObjectSpan(raw) {
+  const low = raw.toLowerCase();
+  let idx = low.indexOf('"suburb1"');
+  if (idx === -1) idx = low.indexOf("'suburb1'");
+  if (idx === -1) return null;
+  let start = idx;
+  while (start > 0 && raw[start] !== "{") start--;
+  if (raw[start] !== "{") return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let q = null;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (c === "\\") {
+        esc = true;
+        continue;
+      }
+      if (c === q) inStr = false;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inStr = true;
+      q = c;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return { start, end: i + 1 };
+    }
   }
   return null;
 }
@@ -117,12 +167,29 @@ function parsePropaiCompareBlock(text) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
     }
+    const looseA = tryParseLooseCompareBlock(raw);
+    if (looseA) return looseA;
     return null;
   }
   const data = tryParseCompareJsonBlob(m[1]);
-  if (!data?.suburb1 || !data?.suburb2) return null;
+  if (!data?.suburb1 || !data?.suburb2) {
+    const looseB = tryParseLooseCompareBlock(raw);
+    if (looseB) return looseB;
+    return null;
+  }
   const prose = stripPropaiCompareBlock(raw);
   return { data, prose };
+}
+
+function tryParseLooseCompareBlock(raw) {
+  const span = findCompareObjectSpan(raw);
+  if (!span) return null;
+  const blob = raw.slice(span.start, span.end);
+  const data = tryParseCompareJsonBlob(blob);
+  if (!data?.suburb1 || !data?.suburb2) return null;
+  let prose = raw.slice(0, span.start) + raw.slice(span.end);
+  prose = stripPropaiCompareBlock(prose);
+  return { data, prose: prose.trim() };
 }
 
 function normalizeCompareWinner(data) {
@@ -284,9 +351,11 @@ function formatInlineChatParts(text) {
   const parts = s.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((p, j) => {
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
-      return React.createElement("strong", { key: j, style: { color: "#e8b84b" } }, p.slice(2, -2));
+      const inner = p.slice(2, -2).replace(/#{1,6}\s*/g, "").replace(/--+/g, " ");
+      return React.createElement("strong", { key: j, style: { color: "#e8b84b" } }, inner);
     }
     let rest = p.replace(/\*([^*]+)\*/g, "$1").replace(/\*+/g, "");
+    rest = rest.replace(/#{1,6}\s*/g, "");
     rest = rest.replace(/--+/g, " ");
     rest = rest.replace(/`+/g, "");
     return rest.length ? React.createElement("span", { key: j }, rest) : null;
@@ -1907,8 +1976,8 @@ export default function App() {
         )
       ),
 
-      // MAIN CHAT
-      React.createElement("div", { style:{ overflow:"hidden", display:"flex", flexDirection:"column", background:"#080a0e" } },
+      // MAIN CHAT (minWidth:0 so nested max-width:800px can use full grid column on desktop)
+      React.createElement("div", { style:{ gridColumn:2, minWidth:0, overflow:"hidden", display:"flex", flexDirection:"column", background:"#080a0e" } },
         // Messages
         React.createElement("div", { style:{ flex:1, overflowY:"auto", padding:"20px 28px", display:"flex", flexDirection:"column", gap:16 } },
           ...msgs.map((m,i) => {
