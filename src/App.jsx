@@ -42,26 +42,84 @@ For DAILY DEALS output:
 Rules: Search web first. Max 3-4 lines per section. No padding. RBA rate 3.85%. Always recommend mortgage broker + conveyancer.`;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
-const PROP_COMPARE_RE = /\[\[PROPAI_COMPARE\]\]\s*([\s\S]*?)\s*\[\[\/PROPAI_COMPARE\]\]/i;
+const PROP_COMPARE_RE_FULL =
+  /\[\[PROPAI_COMPARE\]\]\s*([\s\S]*?)\s*\[\[\/PROPAI_COMPARE\]\]/i;
+const PROP_COMPARE_RE_SINGLE =
+  /\[PROPAI_COMPARE\]\s*([\s\S]*?)\[\/PROPAI_COMPARE\]/i;
 
 function stripPropaiCompareBlock(text) {
-  return String(text || "")
-    .replace(PROP_COMPARE_RE, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let s = String(text || "");
+  s = s.replace(PROP_COMPARE_RE_FULL, "");
+  s = s.replace(PROP_COMPARE_RE_SINGLE, "");
+  const startM = s.match(/\[\[?\s*PROPAI_COMPARE\s*\]?\]/i);
+  if (startM) {
+    const tail = s.slice(startM.index + startM[0].length);
+    const endM = tail.match(/\[\[?\s*\/\s*PROPAI_COMPARE\s*\]?\]/i);
+    if (endM) {
+      s =
+        s.slice(0, startM.index) +
+        tail.slice(endM.index + endM[0].length);
+    }
+  }
+  s = s.replace(/\n{3,}/g, "\n\n").trim();
+  return s;
+}
+
+function tryParseCompareJsonBlob(inner) {
+  let raw = String(inner || "").trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  raw = raw.replace(/[\u201c\u201d]/g, '"').replace(/[\u2018\u2019]/g, "'");
+  const tryJson = (s) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return null;
+    }
+  };
+  let data = tryJson(raw);
+  if (data?.suburb1 && data?.suburb2) return data;
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    let slice = raw.slice(start, end + 1);
+    data = tryJson(slice);
+    if (data?.suburb1 && data?.suburb2) return data;
+    slice = slice.replace(/,\s*([\]}])/g, "$1");
+    data = tryJson(slice);
+    if (data?.suburb1 && data?.suburb2) return data;
+  }
+  return null;
 }
 
 /** @returns {{ data: object, prose: string } | null} */
 function parsePropaiCompareBlock(text) {
   const raw = String(text || "");
-  const m = raw.match(PROP_COMPARE_RE);
-  if (!m) return null;
-  let data;
-  try {
-    data = JSON.parse(m[1].trim());
-  } catch {
+  let m = raw.match(PROP_COMPARE_RE_FULL);
+  if (!m) m = raw.match(PROP_COMPARE_RE_SINGLE);
+  if (!m) {
+    const startM = raw.match(/\[\[?\s*PROPAI_COMPARE\s*\]?\]/i);
+    if (startM) {
+      const from = startM.index + startM[0].length;
+      const tail = raw.slice(from);
+      const endM = tail.match(/\[\[?\s*\/\s*PROPAI_COMPARE\s*\]?\]/i);
+      const inner = endM ? tail.slice(0, endM.index) : tail;
+      const data = tryParseCompareJsonBlob(inner);
+      if (data?.suburb1 && data?.suburb2) {
+        return { data, prose: stripPropaiCompareBlock(raw) };
+      }
+    }
+    const fenced = raw.match(
+      /```(?:json)?\s*(\{[\s\S]*?"suburb1"[\s\S]*?\})\s*```/i
+    );
+    if (fenced) {
+      const data = tryParseCompareJsonBlob(fenced[1]);
+      if (data?.suburb1 && data?.suburb2) {
+        return { data, prose: stripPropaiCompareBlock(raw) };
+      }
+    }
     return null;
   }
+  const data = tryParseCompareJsonBlob(m[1]);
   if (!data?.suburb1 || !data?.suburb2) return null;
   const prose = stripPropaiCompareBlock(raw);
   return { data, prose };
@@ -196,26 +254,238 @@ function renderAssistantContent(m) {
         data: parsed.data,
         stateLabel: m.compareMeta?.state
       }),
-    renderText(parsed?.prose ?? m.text)
+    renderChatContent(parsed?.prose ?? m.text)
   );
 }
 
-function renderText(text) {
-  return text.split("\n").map((line, i) => {
-    if (!line.trim()) return React.createElement("div", { key: i, style: { height: 5 } });
-    const bold = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
-      p.startsWith("**") && p.endsWith("**")
-        ? React.createElement("strong", { key: j, style: { color: "#e8b84b" } }, p.slice(2, -2))
-        : p
-    );
-    if (line.startsWith("- ")) return (
-      React.createElement("div", { key: i, style: { display:"flex", gap:8, marginBottom:3 } },
-        React.createElement("span", { style:{ color:"#e8b84b", flexShrink:0 } }, "•"),
-        React.createElement("span", null, bold)
+function isMarkdownTableDivider(line) {
+  const t = line.trim();
+  if (!t.includes("|") || !/-/.test(t)) return false;
+  return /^[\s|:\-]+$/.test(t);
+}
+
+function isTableRowLine(line) {
+  const t = line.trim();
+  return t.includes("|") && t.length >= 2;
+}
+
+function splitMarkdownTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+/** Bold **segments**, strip stray markdown noise in chat. */
+function formatInlineChatParts(text) {
+  const s = String(text ?? "");
+  const parts = s.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((p, j) => {
+    if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
+      return React.createElement("strong", { key: j, style: { color: "#e8b84b" } }, p.slice(2, -2));
+    }
+    let rest = p.replace(/\*([^*]+)\*/g, "$1").replace(/\*+/g, "");
+    rest = rest.replace(/--+/g, " ");
+    rest = rest.replace(/`+/g, "");
+    return rest.length ? React.createElement("span", { key: j }, rest) : null;
+  });
+}
+
+function normalizeChatLineHashes(line) {
+  return String(line)
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/--+/g, " ")
+    .trim();
+}
+
+function tryConsumeMarkdownTable(lines, startIdx) {
+  if (!isTableRowLine(lines[startIdx])) return null;
+  const headerCells = splitMarkdownTableRow(lines[startIdx]);
+  let j = startIdx + 1;
+  if (j < lines.length && isMarkdownTableDivider(lines[j])) {
+    j += 1;
+    const bodyRows = [];
+    while (j < lines.length && isTableRowLine(lines[j])) {
+      bodyRows.push(splitMarkdownTableRow(lines[j]));
+      j += 1;
+    }
+    return { endIdx: j, headerCells, bodyRows };
+  }
+  if (j < lines.length && isTableRowLine(lines[j])) {
+    const bodyRows = [];
+    while (j < lines.length && isTableRowLine(lines[j])) {
+      if (isMarkdownTableDivider(lines[j])) {
+        j += 1;
+        continue;
+      }
+      bodyRows.push(splitMarkdownTableRow(lines[j]));
+      j += 1;
+    }
+    return { endIdx: j, headerCells, bodyRows };
+  }
+  return null;
+}
+
+function ChatMarkdownTable({ headerCells, bodyRows }) {
+  const maxCols = Math.max(
+    headerCells.length,
+    ...bodyRows.map((r) => r.length),
+    1
+  );
+  const pad = (cells) => {
+    const c = [...cells];
+    while (c.length < maxCols) c.push("");
+    return c;
+  };
+  const head = pad(headerCells);
+  const body = bodyRows.map(pad);
+  return (
+    <div style={{ overflowX: "auto", marginBottom: 10, marginTop: 4 }}>
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontSize: 12,
+          border: "1px solid #52525b"
+        }}
+      >
+        <thead>
+          <tr style={{ background: "#1c1f26" }}>
+            {head.map((c, i) => (
+              <th
+                key={i}
+                style={{
+                  border: "1px solid #52525b",
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  color: "#e8e6e0",
+                  fontWeight: 600
+                }}
+              >
+                {formatInlineChatParts(c)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((row, ri) => (
+            <tr
+              key={ri}
+              style={{ background: ri % 2 === 0 ? "#14161c" : "#0e1117" }}
+            >
+              {row.map((cell, ci) => (
+                <td
+                  key={ci}
+                  style={{
+                    border: "1px solid #52525b",
+                    padding: "7px 10px",
+                    color: "#d4d4d8",
+                    verticalAlign: "top"
+                  }}
+                >
+                  {formatInlineChatParts(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function renderChatContent(text) {
+  const lines = String(text || "").split("\n");
+  const out = [];
+  let key = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed === "") {
+      out.push(React.createElement("div", { key: `s${key++}`, style: { height: 6 } }));
+      i += 1;
+      continue;
+    }
+
+    const tableBlock = tryConsumeMarkdownTable(lines, i);
+    if (tableBlock) {
+      out.push(
+        React.createElement(ChatMarkdownTable, {
+          key: `t${key++}`,
+          headerCells: tableBlock.headerCells,
+          bodyRows: tableBlock.bodyRows
+        })
+      );
+      i = tableBlock.endIdx;
+      continue;
+    }
+
+    if (/^\s*[-*_]{3,}\s*$/.test(trimmed)) {
+      out.push(React.createElement("div", { key: `r${key++}`, style: { height: 4 } }));
+      i += 1;
+      continue;
+    }
+
+    const isHeading = /^#{1,6}\s*\S/.test(line.trim());
+    if (isHeading) {
+      const content = normalizeChatLineHashes(line);
+      out.push(
+        React.createElement(
+          "div",
+          {
+            key: `h${key++}`,
+            style: {
+              fontWeight: 700,
+              color: "#e8e6e0",
+              marginBottom: 6,
+              marginTop: 4,
+              fontSize: 14,
+              lineHeight: 1.45
+            }
+          },
+          formatInlineChatParts(content)
+        )
+      );
+      i += 1;
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
+    const numMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+    if (bulletMatch || numMatch) {
+      const inner = bulletMatch ? bulletMatch[1] : numMatch[1];
+      out.push(
+        React.createElement(
+          "div",
+          { key: `b${key++}`, style: { display: "flex", gap: 8, marginBottom: 4 } },
+          React.createElement("span", { style: { color: "#e8b84b", flexShrink: 0 } }, "•"),
+          React.createElement("span", null, formatInlineChatParts(inner))
+        )
+      );
+      i += 1;
+      continue;
+    }
+
+    const normalized = normalizeChatLineHashes(line);
+    if (!normalized) {
+      i += 1;
+      continue;
+    }
+
+    out.push(
+      React.createElement(
+        "div",
+        { key: `p${key++}`, style: { marginBottom: 3, lineHeight: 1.75 } },
+        formatInlineChatParts(normalized)
       )
     );
-    return React.createElement("div", { key: i, style: { marginBottom: 2 } }, bold);
-  });
+    i += 1;
+  }
+  return out;
 }
 
 /** Remove markdown tokens so PDF shows clean prose (##, **, *, --, bullets, hr lines). */
@@ -1649,9 +1919,9 @@ export default function App() {
               (searching || busy);
             const compareParsed = m.role === "assistant" ? parsePropaiCompareBlock(m.text) : null;
             const compareLayout = m.role === "assistant" && (!!m.compareMeta || !!compareParsed);
-            return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"flex-start", maxWidth: compareLayout ? "min(960px, 96%)" : "82%", animation:"fu 0.3s ease both" } },
+            return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"stretch", width:m.role==="assistant"?"100%":undefined, maxWidth:m.role==="user"?"min(520px, 88%)":"min(800px, 100%)", animation:"fu 0.3s ease both" } },
             React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0, background:m.role==="assistant"?"rgba(232,184,75,0.1)":"#181c24", border:`1px solid ${m.role==="assistant"?"rgba(232,184,75,0.25)":"rgba(255,255,255,0.06)"}` } }, m.role==="assistant"?"🏡":"👤"),
-            React.createElement("div", { style:{ padding: compareLayout ? "14px 16px" : "12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
+            React.createElement("div", { style:{ flex:m.role==="assistant"?1:undefined, minWidth:0, padding: compareLayout ? "14px 16px" : "12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
               lastAssistantSearching
                 ? React.createElement(React.Fragment, null,
                     React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "🔍"),
@@ -1659,7 +1929,7 @@ export default function App() {
                   )
                 : m.role === "assistant"
                   ? renderAssistantContent(m)
-                  : renderText(m.text)
+                  : renderChatContent(m.text)
             )
             );
           }),

@@ -128,7 +128,7 @@ Output requirements:
 3) Assign each suburb an investment score out of 100 (PropAI-style).
 4) Per suburb verdict: exactly one of BUY, NEGOTIATE, or SKIP.
 
-5) At the VERY END of your reply, append this machine-readable block exactly (JSON between markers — no markdown inside the JSON, use straight double quotes only):
+5) At the VERY END of your reply, append this machine-readable block exactly (JSON between markers — no markdown inside the JSON, use straight double quotes only). Do not wrap this block in \`\`\` code fences. Keep the opening [[PROPAI_COMPARE]] and closing [[/PROPAI_COMPARE]] lines exactly as shown:
 
 [[PROPAI_COMPARE]]
 {"suburb1":{"name":"${a}","score":0,"yield":"","growth":"","verdict":"BUY"},"suburb2":{"name":"${b}","score":0,"yield":"","growth":"","verdict":"BUY"},"winner":{"name":"${a}","reason":"One sentence: which suburb wins for a typical investor and why."}}
