@@ -748,50 +748,18 @@ function stripPdfThinkingPreamble(text) {
 
 function buildBrandedPdf(analysisText, options = {}) {
   const compareMeta = options.compareMeta;
-  const strippedForTitle = stripPdfThinkingPreamble(
-    stripPropaiCompareBlock(analysisText)
-  );
+  const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
   const title = pdfAscii(
     compareMeta
       ? cleanPdfTitle(`${compareMeta.suburbA} vs ${compareMeta.suburbB} - ${compareMeta.state}`)
-      : extractReportTitle(strippedForTitle)
+      : extractReportTitle(src)
   );
-  const dateStr = new Date().toLocaleDateString("en-AU", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric"
-  });
   const fileDate = new Date().toISOString().slice(0, 10);
 
-  const rawLines = String(strippedForTitle || "").replace(/\r/g, "").split("\n");
-  const blocks = [];
-  for (const rawLine of rawLines) {
-    const item = classifyPdfLine(rawLine);
-    if (item.kind === "blank") {
-      blocks.push({ type: "blank" });
-      continue;
-    }
-    if (item.kind === "rule") {
-      blocks.push({ type: "rule" });
-      continue;
-    }
-    if (item.kind === "heading") {
-      const cleaned = pdfAscii(stripMarkdownSymbols(item.text));
-      if (cleaned) blocks.push({ type: "heading", level: item.level, text: cleaned });
-      continue;
-    }
-    const cleaned = pdfAscii(stripMarkdownSymbols(item.text));
-    if (cleaned) blocks.push({ type: "body", text: cleaned });
-  }
-
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  const PW = 210;
+  const PH = 297;
   const MX = 20;
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = MX;
-  const contentW = pageW - margin * 2;
-  const bottomSafe = 20;
 
   const CREAM = [245, 239, 227];
   const CREAM_DEEP = [237, 229, 211];
@@ -803,12 +771,10 @@ function buildBrandedPdf(analysisText, options = {}) {
   const FOREST_DEEP = [30, 50, 25];
   const MOSS = [107, 142, 98];
   const ORANGE = [217, 107, 44];
+  const AMBER = [200, 145, 43];
+  const CRIMSON = [180, 66, 56];
   const LINE = [217, 209, 191];
   const LINE_SOFT = [232, 224, 205];
-
-  const setFill = (rgb) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-  const setStroke = (rgb) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
-  const setText = (rgb) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
 
   const clean = (t) =>
     String(t || "")
@@ -817,175 +783,374 @@ function buildBrandedPdf(analysisText, options = {}) {
       .replace(/[\u201c\u201d]/g, '"')
       .replace(/\u2026/g, "...")
       .replace(/\u00a0/g, " ")
+      .replace(/\*\*/g, "")
       .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
       .replace(/[\u{2600}-\u{27BF}]/gu, "")
       .replace(/[^\x00-\x7F]/g, "")
       .trim();
 
-  const safeTitle = clean(title);
-
-  const paintBg = (rgb) => {
-    setFill(rgb);
-    doc.rect(0, 0, pageW, pageH, "F");
+  const setFill = (c) => doc.setFillColor(c[0], c[1], c[2]);
+  const setStroke = (c) => doc.setDrawColor(c[0], c[1], c[2]);
+  const setText = (c) => doc.setTextColor(c[0], c[1], c[2]);
+  const paintBg = (c) => {
+    setFill(c);
+    doc.rect(0, 0, PW, PH, "F");
   };
 
-  const drawLogo = (x, y, size = "small") => {
-    const dotR = size === "large" ? 1.15 : 0.85;
+  const drawPageHead = (sectionLabel) => {
     setFill(ORANGE);
-    doc.circle(x + dotR, y - dotR * 0.25, dotR, "F");
+    doc.circle(MX + 1.6, 20, 1.6, "F");
+    setText(FOREST_DEEP);
+    doc.setFont("times", "normal");
+    doc.setFontSize(13);
+    doc.text("PropAI", MX + 5, 22);
+    setText(INK_MUTED);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(size === "large" ? 11 : 8.5);
-    setText(INK);
-    doc.text("PropAI", x + dotR * 2 + 2.2, y + 1);
+    doc.setFontSize(7);
+    doc.text(String(sectionLabel).toUpperCase(), PW - MX, 22, { align: "right", charSpace: 0.8 });
+    setStroke(LINE);
+    doc.setLineWidth(0.2);
+    doc.line(MX, 26, PW - MX, 26);
   };
 
-  paintBg(CREAM);
-  setFill(FOREST_DEEP);
-  doc.rect(0, 0, pageW, 11, "F");
-  setText(PAPER);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.text("Australian property intelligence", margin, 7);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text("REPORT", pageW - margin, 7, { align: "right" });
-
-  let y = 17;
-  drawLogo(margin, y, "large");
-  y += 11;
-
-  doc.setFont("times", "bold");
-  doc.setFontSize(18);
-  setText(FOREST_DEEP);
-  const titleLines = doc.splitTextToSize(safeTitle, contentW);
-  doc.text(titleLines, margin, y);
-  y += titleLines.length * 7.2 + 3;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  setText(INK_MUTED);
-  doc.text(clean(`Prepared ${dateStr}`), margin, y);
-  y += 5;
-
-  setStroke(ORANGE);
-  doc.setLineWidth(0.55);
-  doc.line(margin, y, pageW - margin, y);
-  y += 2;
-  setText(ORANGE);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.text("VIEW ANALYSIS", margin, y);
-  y += 7;
-
-  setText(INK_SOFT);
-  doc.setFont("helvetica", "normal");
-
-  const bodyLineH = 5.2;
-  const headingSize = (lvl) => (lvl <= 2 ? 12.5 : lvl <= 4 ? 11.2 : 10);
-  let sectionHeadingIndex = 0;
-
-  const newPage = () => {
-    doc.addPage();
-    paintBg(PAPER);
-    setFill(FOREST);
-    doc.rect(0, 0, pageW, 6.5, "F");
-    setText(PAPER);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.text("PropAI", margin, 4.5);
-    setText(MOSS);
+  const drawPageFoot = (pageNum) => {
+    setStroke(LINE);
+    doc.setLineWidth(0.2);
+    doc.line(MX, PH - 18, PW - MX, PH - 18);
+    setText(INK_MUTED);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.text("Continued", pageW - margin, 4.5, { align: "right" });
-    y = 13;
+    doc.text("PROPAI  ·  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
+    doc.setFont("times", "italic");
+    doc.setFontSize(9);
+    doc.text(String(pageNum), PW - MX, PH - 12, { align: "right" });
   };
 
-  const ensureSpace = (needMm) => {
-    if (y + needMm > pageH - bottomSafe) newPage();
+  const drawEyebrow = (text, x, y) => {
+    setText(FOREST);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text(String(text).toUpperCase(), x, y, { charSpace: 0.8 });
   };
 
-  for (const block of blocks) {
-    if (block.type === "blank") {
-      ensureSpace(4);
-      y += 3.5;
-      continue;
+  const drawTitleTwoTone = (plain, italic, x, y, size = 26) => {
+    setText(INK);
+    doc.setFont("times", "normal");
+    doc.setFontSize(size);
+    doc.text(plain, x, y);
+    if (italic) {
+      setText(FOREST);
+      doc.setFont("times", "italic");
+      doc.text(italic, x + doc.getTextWidth(plain) + 1, y);
     }
-    if (block.type === "rule") {
-      ensureSpace(8);
-      setStroke(LINE);
-      doc.setLineWidth(0.35);
-      doc.line(margin, y + 2, pageW - margin, y + 2);
-      y += 7;
-      continue;
-    }
-    if (block.type === "heading") {
-      sectionHeadingIndex += 1;
-      if (sectionHeadingIndex > 1) {
-        ensureSpace(10);
-        setStroke(LINE_SOFT);
-        doc.setLineWidth(0.2);
-        doc.line(margin, y + 1, pageW - margin, y + 1);
-        y += 6;
+  };
+
+  let suburbName =
+    (src.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*,?\s*(?:QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "Report";
+  let stateCode = (src.match(/\b(QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "QLD";
+  const postcode = (src.match(/\b(\d{4})\b/)?.[1]) || "";
+  if (compareMeta) {
+    suburbName = `${compareMeta.suburbA} vs ${compareMeta.suburbB}`;
+    stateCode = compareMeta.state;
+  }
+  const scoreMatch = src.match(
+    /(?:Investment Score|PropAI Score|PropAI Investment Score|Deal Score)[:\s]+(\d+(?:\.\d+)?)\s*\/\s*(\d+)/i
+  );
+  const score = scoreMatch ? scoreMatch[1] : "-";
+  const scoreMax = scoreMatch ? scoreMatch[2] : "100";
+  const scorePct = scoreMatch ? Math.min(1, parseFloat(score) / parseFloat(scoreMax)) : 0.75;
+  const verdictMatch = src.match(/\b(?:VERDICT[:\s]+)?(BUY|NEGOTIATE|SKIP|WATCH)\b/i);
+  let verdict = verdictMatch ? verdictMatch[1].toUpperCase() : "NEGOTIATE";
+  if (verdict === "WATCH") verdict = "NEGOTIATE";
+  const walkAwayMatch = src.match(/\$(\d+)[Kk]?\s*[-–—]\s*\$(\d+)[Kk]?/);
+  const walkAway = walkAwayMatch ? `$${walkAwayMatch[1]}K - $${walkAwayMatch[2]}K` : "See Analysis";
+  const thesisMatch = src.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
+  const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
+  const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
+  const verdictColor = verdict === "BUY" ? FOREST : verdict === "SKIP" ? CRIMSON : AMBER;
+  const refPrefix = suburbName.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
+
+  const parseMarkdownTables = (text) => {
+    const lines = text.split("\n");
+    const tables = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (!lines[i].includes("|")) {
+        i += 1;
+        continue;
       }
-      ensureSpace(16);
-      const hs = headingSize(block.level);
-      doc.setFont("times", "bold");
-      doc.setFontSize(hs);
-      setText(FOREST_DEEP);
-      const lines = doc.splitTextToSize(clean(block.text), contentW);
-      const headLineGap = Math.max(5, hs * 0.42);
-      for (let li = 0; li < lines.length; li++) {
-        ensureSpace(headLineGap + 1);
-        doc.text(lines[li], margin, y);
-        y += headLineGap;
+      const chunk = [];
+      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
+        const row = lines[i];
+        if (/^[\s|:\-]+$/.test(row.replace(/[^|\-:\s]/g, "")) && /-/.test(row)) {
+          i += 1;
+          continue;
+        }
+        const cells = row
+          .split("|")
+          .map((c) => clean(c.trim()))
+          .filter((c) => c.length > 0);
+        if (cells.length) chunk.push(cells);
+        i += 1;
       }
-      y += 2;
-      doc.setFont("helvetica", "normal");
-      continue;
+      if (chunk.length >= 2) tables.push(chunk);
+      i += 1;
     }
+    return tables;
+  };
+
+  const extractSection = (labelRe) => {
+    const m = src.match(
+      new RegExp(`${labelRe}[\\s\\S]*?(?=\\n\\s*(?:#{1,3}\\s|[A-Z][A-Z \\-]{2,30}:|🔥|🏡|⭐|📊|💸|⚠️|🎯|🧠|💡|📈|🔍|🔁|$))`, "i")
+    );
+    return m ? clean(m[0].replace(/^[^\n]+\n/, "").trim()) : "";
+  };
+
+  const redFlagsBlock = extractSection("RED FLAGS");
+  const metricsHint = extractSection("📊 DATA") || extractSection("KEY METRICS") || extractSection("SCORE BREAKDOWN");
+  const marketBlock = extractSection("📈 MARKET") || extractSection("⚡ QUICK TAKE");
+  const walkBlock =
+    extractSection("🎯 NEGOTIATION") ||
+    extractSection("Walk-Away") ||
+    extractSection("WALK-AWAY") ||
+    extractSection("Walk Away");
+
+  const longParas = src
+    .split(/\n\n/)
+    .map((p) => clean(stripMarkdownSymbols(p)))
+    .filter((p) => p.length > 80);
+  const execP1 = longParas[0] || clean(thesis);
+  const execP2 = longParas[1] || longParas[0] || "";
+
+  const drawCover = () => {
+    paintBg(CREAM);
+    setFill(ORANGE);
+    doc.circle(MX + 1.2, 24, 1.8, "F");
+    setText(INK);
+    doc.setFont("times", "normal");
+    doc.setFontSize(18);
+    doc.text("PropAI", MX + 5, 26);
+    setText(INK_MUTED);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    const rightX = PW - MX;
+    doc.text("CONFIDENTIAL REPORT", rightX, 20, { align: "right", charSpace: 0.6 });
+    doc.text(today.toUpperCase(), rightX, 24, { align: "right", charSpace: 0.6 });
+    doc.text(`REF · ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
+    drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
+    setText(INK);
+    doc.setFont("times", "normal");
+    doc.setFontSize(72);
+    doc.text(`${suburbName},`, MX, 138);
+    setText(FOREST);
+    doc.setFont("times", "italic");
+    doc.setFontSize(72);
+    doc.text(`${stateCode}.`, MX, 170);
+    setText(INK_SOFT);
+    doc.setFont("times", "italic");
+    doc.setFontSize(16);
+    const thesisLines = doc.splitTextToSize(thesis, PW - 2 * MX - 40);
+    doc.text(thesisLines, MX, 188);
+    setStroke(LINE);
+    doc.setLineWidth(0.2);
+    doc.line(MX, 204, PW - MX - 60, 204);
+    setText(INK_SOFT);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    const tag = doc.splitTextToSize(
+      `A rentvestor's analysis of ${suburbName}, prepared by PropAI. Deal Score, Walk-Away Number, and full negotiation strategy inside.`,
+      130
+    );
+    doc.text(tag, MX, 214);
+    setText(INK_MUTED);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("DEAL SCORE", MX, PH - 36);
+    doc.text("WALK-AWAY", PW - MX, PH - 36, { align: "right" });
+    setText(INK);
+    doc.setFont("times", "normal");
+    doc.setFontSize(16);
+    doc.text(`${score} / ${scoreMax}`, MX, PH - 28);
+    doc.text(walkAway, PW - MX, PH - 28, { align: "right" });
+    const pillW = 60;
+    const pillH = 11;
+    const pillX = PW / 2 - pillW / 2;
+    const pillY = PH - 42;
+    setFill(verdictColor);
+    doc.roundedRect(pillX, pillY, pillW, pillH, 5.5, 5.5, "F");
+    setFill(CREAM);
+    doc.circle(pillX + 6, pillY + 5.5, 1.2, "F");
+    setText(CREAM);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text(`VERDICT  ·  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
+  };
+
+  const drawExecSummary = () => {
+    paintBg(PAPER);
+    drawPageHead(`${suburbName} ${stateCode}`);
+    drawEyebrow("EXECUTIVE SUMMARY", MX, 42);
+    drawTitleTwoTone("The ", "thesis,", MX, 60, 28);
+    drawTitleTwoTone("in one ", "page.", MX, 72, 28);
+    setText(INK_SOFT);
+    doc.setFont("times", "italic");
+    doc.setFontSize(13);
+    const thLines = doc.splitTextToSize(thesis, PW - 2 * MX - 20);
+    doc.text(thLines, MX, 90);
+    const gridTop = 112;
+    const gridH = 44;
+    const gridW = PW - 2 * MX;
+    const cellW = gridW / 2;
+    setFill(CREAM);
+    setStroke(LINE);
+    doc.setLineWidth(0.35);
+    doc.rect(MX, gridTop, gridW, gridH, "FD");
+    doc.line(MX + cellW, gridTop, MX + cellW, gridTop + gridH);
+    setText(INK_MUTED);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("DEAL SCORE", MX + 8, 122);
+    doc.text("VERDICT", MX + cellW + 8, 122);
+    setText(INK);
+    doc.setFont("times", "normal");
+    doc.setFontSize(30);
+    doc.text(String(score), MX + 8, 138);
+    setText(INK_MUTED);
+    doc.setFont("times", "italic");
+    doc.setFontSize(13);
+    doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(String(score)) + 2, 138);
+    const prettyV =
+      verdict.charAt(0) + verdict.slice(1).toLowerCase();
+    setText(verdictColor);
+    doc.setFont("times", "italic");
+    doc.setFontSize(24);
+    doc.text(prettyV, MX + cellW + 8, 140);
+    const barW = cellW - 16;
+    setFill(LINE_SOFT);
+    doc.rect(MX + 8, 144, barW, 1.5, "F");
+    setFill(FOREST);
+    doc.rect(MX + 8, 144, barW * scorePct, 1.5, "F");
+    let yy = 170;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     setText(INK);
-    const paraLines = doc.splitTextToSize(clean(block.text), contentW);
-    for (let i = 0; i < paraLines.length; i++) {
-      ensureSpace(bodyLineH + 1);
-      doc.text(paraLines[i], margin, y);
-      y += bodyLineH;
+    const e1 = doc.splitTextToSize(execP1, PW - 2 * MX);
+    doc.text(e1, MX, yy);
+    yy += e1.length * 5 + 4;
+    if (execP2 && execP2 !== execP1) {
+      const e2 = doc.splitTextToSize(execP2, PW - 2 * MX);
+      doc.text(e2, MX, yy);
     }
-    y += 3;
-  }
+    drawPageFoot(2);
+  };
 
-  y += 4;
-  ensureSpace(14);
-  setStroke(LINE);
-  doc.setLineWidth(0.25);
-  doc.line(margin, y, pageW - margin, y);
-  y += 5;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  setText(INK_MUTED);
-  const disclaimer =
-    "Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer before making decisions.";
-  const discLines = doc.splitTextToSize(clean(disclaimer), contentW);
-  let dy = y;
-  for (let di = 0; di < discLines.length; di++) {
-    ensureSpace(5);
-    doc.text(discLines[di], margin, dy);
-    dy += 4.2;
-  }
-
-  const totalPages = doc.internal.getNumberOfPages();
-  for (let p = 1; p <= totalPages; p++) {
-    doc.setPage(p);
-    setStroke(LINE_SOFT);
-    doc.setLineWidth(0.2);
-    doc.line(margin, pageH - 11, pageW - margin, pageH - 11);
+  const drawMetrics = (pageNum) => {
+    paintBg(PAPER);
+    drawPageHead(`${suburbName} · Metrics`);
+    drawEyebrow("KEY METRICS & DATA", MX, 42);
+    setText(INK);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    let yy = 54;
+    const tables = parseMarkdownTables(src);
+    if (tables.length) {
+      tables.slice(0, 2).forEach((table) => {
+        const rows = table.slice(0, 10);
+        const cardGap = 3;
+        const cardW = (PW - 2 * MX - cardGap) / 2;
+        let rowY = yy;
+        for (const row of rows) {
+          if (rowY > PH - 52) break;
+          for (let i = 0; i < 2; i += 1) {
+            const cell = row[i] || "";
+            const x0 = MX + i * (cardW + cardGap);
+            setFill(CREAM_DEEP);
+            setStroke(LINE_SOFT);
+            doc.setLineWidth(0.2);
+            doc.rect(x0, rowY, cardW, 18, "FD");
+            setText(INK_SOFT);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            const cl = doc.splitTextToSize(cell, cardW - 4);
+            doc.text(cl, x0 + 2, rowY + 5);
+          }
+          rowY += 22;
+        }
+        yy = rowY + 8;
+      });
+    } else {
+      const ml = doc.splitTextToSize(metricsHint || clean(src.slice(0, 1200)), PW - 2 * MX);
+      doc.text(ml, MX, yy);
+      yy += ml.length * 5;
+    }
+    drawEyebrow("DATA SNAPSHOT", MX, Math.min(yy + 8, PH - 40));
     setText(INK_MUTED);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.text("Confidential - Generated by PropAI", margin, pageH - 6);
-    doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 6, { align: "right" });
-  }
+    doc.setFontSize(8);
+    doc.text("Data Confidence: MEDIUM (verify figures with local agents).", MX, Math.min(yy + 16, PH - 30));
+    drawPageFoot(pageNum);
+  };
+
+  const drawWhatsWorking = (pageNum) => {
+    paintBg(PAPER);
+    drawPageHead(`${suburbName} · Outlook`);
+    drawEyebrow("WHAT'S WORKING", MX, 42);
+    setText(INK);
+    doc.setFont("times", "italic");
+    doc.setFontSize(13);
+    const body = marketBlock || clean(src.slice(0, 800));
+    const lines = doc.splitTextToSize(body, PW - 2 * MX);
+    doc.text(lines, MX, 56);
+    drawPageFoot(pageNum);
+  };
+
+  const drawRedFlags = (pageNum) => {
+    paintBg(PAPER);
+    drawPageHead(`${suburbName} · Risks`);
+    drawEyebrow("RED FLAGS", MX, 42);
+    setText(CRIMSON);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    const rf = redFlagsBlock || "Review flood, insurance, and supply risks in the full analysis.";
+    const rfl = doc.splitTextToSize(rf, PW - 2 * MX);
+    doc.text(rfl, MX, 56);
+    drawPageFoot(pageNum);
+  };
+
+  const drawWalkAway = (pageNum) => {
+    paintBg(PAPER);
+    drawPageHead(`${suburbName} · Strategy`);
+    drawEyebrow("WALK-AWAY & NEGOTIATION", MX, 42);
+    setText(INK);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    const wb = walkBlock || walkAway;
+    const wl = doc.splitTextToSize(wb, PW - 2 * MX);
+    doc.text(wl, MX, 56);
+    setStroke(ORANGE);
+    doc.setLineWidth(0.3);
+    doc.line(MX, 56 + wl.length * 5 + 6, PW - MX, 56 + wl.length * 5 + 6);
+    setText(INK_MUTED);
+    doc.setFontSize(8);
+    doc.text(
+      "Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer before making decisions.",
+      MX,
+      56 + wl.length * 5 + 12
+    );
+    drawPageFoot(pageNum);
+  };
+
+  drawCover();
+  doc.addPage();
+  drawExecSummary();
+  doc.addPage();
+  drawMetrics(3);
+  doc.addPage();
+  drawWhatsWorking(4);
+  doc.addPage();
+  drawRedFlags(5);
+  doc.addPage();
+  drawWalkAway(6);
 
   const fname = `PropAI-Report-${slugForFilename(title)}-${fileDate}.pdf`;
   doc.save(fname);
