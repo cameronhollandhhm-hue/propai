@@ -690,9 +690,12 @@ function classifyPdfLine(rawLine) {
   return { kind: "body", text: t };
 }
 
-/** Strip non-ASCII (emojis, mojibake) so jsPDF never corrupts glyphs. */
+/** Normalize smart punctuation, then strip remaining non-ASCII for jsPDF. */
 function pdfAscii(text) {
   return String(text || "")
+    .replace(/[\u2013\u2014\u2012]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
     .replace(/[^\x00-\x7F]/g, "")
     .replace(/\s+/g, " ")
     .trim();
