@@ -60,8 +60,23 @@ function renderText(text) {
   });
 }
 
+/** Remove markdown tokens so PDF shows clean prose (##, **, *, --, bullets, hr lines). */
+function stripMarkdownSymbols(text) {
+  let s = String(text || "");
+  s = s.replace(/\*\*([^*]*)\*\*/g, "$1");
+  s = s.replace(/__(.*?)__/g, "$1");
+  s = s.replace(/\*([^*]+)\*/g, "$1");
+  s = s.replace(/^#{1,6}\s*/gm, "");
+  s = s.replace(/^[-*+]\s+/gm, "");
+  s = s.replace(/^\s*[-*_]{3,}\s*$/gm, "");
+  s = s.replace(/--+/g, " ");
+  s = s.replace(/\*+/g, "");
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
+
 function stripMarkdownForPdf(text) {
-  return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1");
+  return stripMarkdownSymbols(text);
 }
 
 function extractReportTitle(analysisText) {
@@ -94,12 +109,27 @@ const stripEmojis = (text) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const PDF = {
+  forest: [45, 90, 39],
+  forestSoft: [61, 106, 55],
+  headerTint: [240, 244, 240],
+  body: [51, 51, 51],
+  muted: [118, 128, 118]
+};
+
+function classifyPdfLine(rawLine) {
+  const t = rawLine.trim();
+  if (!t) return { kind: "blank" };
+  if (/^[-*_]{3,}\s*$/.test(t)) return { kind: "rule" };
+  const hm = t.match(/^(#{1,6})\s*(.*)$/);
+  if (hm && hm[2] !== undefined) {
+    const level = hm[1].length;
+    return { kind: "heading", level: Math.min(level, 6), text: hm[2] };
+  }
+  return { kind: "body", text: t };
+}
+
 function buildBrandedPdf(analysisText) {
-  const cleanBody = stripMarkdownForPdf(analysisText)
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => stripEmojis(line))
-    .join("\n");
   const title = stripEmojis(extractReportTitle(analysisText));
   const dateStr = new Date().toLocaleDateString("en-AU", {
     weekday: "long",
@@ -109,73 +139,165 @@ function buildBrandedPdf(analysisText) {
   });
   const fileDate = new Date().toISOString().slice(0, 10);
 
+  const rawLines = String(analysisText || "").replace(/\r/g, "").split("\n");
+  const blocks = [];
+  for (const rawLine of rawLines) {
+    const item = classifyPdfLine(rawLine);
+    if (item.kind === "blank") {
+      blocks.push({ type: "blank" });
+      continue;
+    }
+    if (item.kind === "rule") {
+      blocks.push({ type: "rule" });
+      continue;
+    }
+    if (item.kind === "heading") {
+      const cleaned = stripEmojis(stripMarkdownSymbols(item.text));
+      if (cleaned) blocks.push({ type: "heading", level: item.level, text: cleaned });
+      continue;
+    }
+    const cleaned = stripEmojis(stripMarkdownSymbols(item.text));
+    if (cleaned) blocks.push({ type: "body", text: cleaned });
+  }
+
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 18;
   const contentW = pageW - margin * 2;
-  const bottomSafe = 22;
-  let y = margin;
+  const headerH = 26;
+  const footerH = 16;
+  const bottomSafe = footerH + 6;
+  let y = headerH + 14;
 
-  doc.setFillColor(14, 17, 23);
-  doc.rect(0, 0, pageW, 36, "F");
-  doc.setFillColor(232, 184, 75);
-  doc.roundedRect(margin, 9, 9, 9, 1.5, 1.5, "F");
+  const contHeaderH = 9;
+  const newPage = () => {
+    doc.addPage();
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, pageW, pageH, "F");
+    doc.setFillColor(...PDF.headerTint);
+    doc.rect(0, 0, pageW, contHeaderH, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(...PDF.forest);
+    doc.text("PropAI — Property report", margin, 6);
+    y = contHeaderH + 8;
+  };
+
+  const ensureSpace = (needMm) => {
+    if (y + needMm > pageH - bottomSafe) newPage();
+  };
+
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, pageW, pageH, "F");
+  doc.setFillColor(...PDF.headerTint);
+  doc.rect(0, 0, pageW, headerH, "F");
+
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.setTextColor(0, 0, 0);
-  doc.text("P", margin + 4.5, 15.5, { align: "center" });
-  doc.setFontSize(18);
-  doc.setTextColor(232, 184, 75);
-  doc.text("PropAI", margin + 12, 16);
+  doc.setFontSize(20);
+  doc.setTextColor(...PDF.forest);
+  doc.text("PropAI", margin, 16);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  doc.setTextColor(200, 200, 208);
-  doc.text("Australian property intelligence", margin + 12, 22);
+  doc.setTextColor(...PDF.forestSoft);
+  doc.text("Australian property intelligence", margin, 22);
 
-  y = 44;
-  doc.setTextColor(28, 28, 32);
+  doc.setTextColor(...PDF.forest);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
   const titleLines = doc.splitTextToSize(title, contentW);
   doc.text(titleLines, margin, y);
-  y += titleLines.length * 7 + 2;
+  y += titleLines.length * 6.5 + 3;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor(100, 100, 110);
-  doc.text(`Generated ${dateStr}`, margin, y);
+  doc.setTextColor(...PDF.muted);
+  doc.text(`Prepared ${dateStr}`, margin, y);
+  y += 8;
+
+  doc.setDrawColor(...PDF.forestSoft);
+  doc.setLineWidth(0.35);
+  doc.line(margin, y, pageW - margin, y);
   y += 9;
 
-  doc.setDrawColor(210, 210, 218);
-  doc.line(margin, y, pageW - margin, y);
-  y += 7;
+  const bodyLineH = 5;
+  const headingSize = (lvl) => (lvl <= 2 ? 12 : lvl <= 4 ? 11 : 10);
+  let sectionHeadingIndex = 0;
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(35, 35, 42);
-  const bodyLines = doc.splitTextToSize(cleanBody, contentW);
-  const lineH = 5.1;
-  for (let i = 0; i < bodyLines.length; i++) {
-    if (y > pageH - bottomSafe) {
-      doc.addPage();
-      y = margin;
-      doc.setTextColor(35, 35, 42);
+  for (const block of blocks) {
+    if (block.type === "blank") {
+      ensureSpace(4);
+      y += 3.5;
+      continue;
     }
-    doc.text(bodyLines[i], margin, y);
-    y += lineH;
+    if (block.type === "rule") {
+      ensureSpace(8);
+      doc.setDrawColor(...PDF.forestSoft);
+      doc.setLineWidth(0.25);
+      doc.line(margin, y + 2, pageW - margin, y + 2);
+      y += 7;
+      continue;
+    }
+    if (block.type === "heading") {
+      sectionHeadingIndex += 1;
+      if (sectionHeadingIndex > 1) {
+        ensureSpace(10);
+        doc.setDrawColor(...PDF.forestSoft);
+        doc.setLineWidth(0.2);
+        doc.line(margin, y + 1, pageW - margin, y + 1);
+        y += 6;
+      }
+      ensureSpace(16);
+      const hs = headingSize(block.level);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(hs);
+      doc.setTextColor(...PDF.forest);
+      const lines = doc.splitTextToSize(block.text, contentW);
+      const headLineGap = Math.max(5, hs * 0.42);
+      for (let li = 0; li < lines.length; li++) {
+        ensureSpace(headLineGap + 1);
+        doc.text(lines[li], margin, y);
+        y += headLineGap;
+      }
+      y += 2;
+      doc.setFont("helvetica", "normal");
+      continue;
+    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(...PDF.body);
+    const paraLines = doc.splitTextToSize(block.text, contentW);
+    for (let i = 0; i < paraLines.length; i++) {
+      ensureSpace(bodyLineH + 1);
+      doc.text(paraLines[i], margin, y);
+      y += bodyLineH;
+    }
+    y += 3;
   }
 
-  y += 6;
-  if (y > pageH - bottomSafe) {
-    doc.addPage();
-    y = margin;
-  }
+  y += 4;
+  ensureSpace(14);
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
-  doc.setTextColor(120, 120, 130);
-  const foot = "PropAI — Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer.";
-  const footLines = doc.splitTextToSize(foot, contentW);
-  doc.text(footLines, margin, y);
+  doc.setTextColor(130, 130, 130);
+  const disclaimer = "Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer before making decisions.";
+  const discLines = doc.splitTextToSize(disclaimer, contentW);
+  let dy = y;
+  for (let di = 0; di < discLines.length; di++) {
+    ensureSpace(5);
+    doc.text(discLines[di], margin, dy);
+    dy += 4.2;
+  }
+
+  const totalPages = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text("Confidential — Generated by PropAI", margin, pageH - 10);
+    doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 10, { align: "right" });
+  }
 
   const fname = `PropAI-Report-${slugForFilename(title)}-${fileDate}.pdf`;
   doc.save(fname);
