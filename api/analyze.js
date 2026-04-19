@@ -1,3 +1,5 @@
+import { getMicroburbsPromptBlock } from "./microburbs.js";
+
 export const maxDuration = 60;
 
 const CACHE_TTL_MS = 60 * 1000;
@@ -88,11 +90,19 @@ export default async function handler(req, res) {
       content: (m.text || m.content || "").slice(0, 1000)
     }));
 
+    let systemWithData = SYSTEM_PROMPT;
+    try {
+      const { block } = await getMicroburbsPromptBlock(userText);
+      if (block) systemWithData += block;
+    } catch (e) {
+      console.error("microburbs prompt block:", e);
+    }
+
     const body = {
       model: "claude-sonnet-4-5",
       max_tokens: 2000,
       stream: true,
-      system: SYSTEM_PROMPT,
+      system: systemWithData,
       messages
     };
 
