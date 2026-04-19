@@ -520,35 +520,127 @@ export default function App() {
     if (!msg || busy) return;
     if (!isPro && usageCount >= FREE_LIMIT) return;
     const history = [...msgs, { role:"user", text:msg }];
-    setMsgs(history);
+    setMsgs([...history, { role:"assistant", text:"" }]);
     setInput("");
     setBusy(true);
     setSearching(true);
     setUsageCount(c => c + 1);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 50000);
       const res = await fetch("/api/analyze", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ history, system: SYSTEM }),
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
-      const data = await res.json();
-      setSearching(false);
+
       if (!res.ok) {
-        setMsgs(p=>[...p,{ role:"assistant", text:"⚠️ Something went wrong pulling live data. Try again in 10–20 seconds." }]);
-      } else {
-        const reply = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n") || "No response.";
-        setMsgs(p=>[...p,{ role:"assistant", text:reply }]);
+        let errMsg = "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
+        try {
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const j = await res.json();
+            if (j?.error) errMsg = typeof j.error === "string" ? `⚠️ ${j.error}` : errMsg;
+          }
+        } catch { /* ignore */ }
+        setSearching(false);
+        setMsgs(p => {
+          const n = [...p];
+          n[n.length - 1] = { role:"assistant", text: errMsg };
+          return n;
+        });
+        setBusy(false);
+        return;
       }
-    } catch(e) {
+
+      if (!res.body) {
+        setSearching(false);
+        setMsgs(p => {
+          const n = [...p];
+          n[n.length - 1] = { role:"assistant", text: "⚠️ No response stream." };
+          return n;
+        });
+        setBusy(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let firstToken = false;
+      let streamHalt = false;
+
+      const applyLine = (raw) => {
+        if (streamHalt) return;
+        const line = raw.trim();
+        if (!line) return;
+        let obj;
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (obj.error) {
+          streamHalt = true;
+          setSearching(false);
+          setMsgs(p => {
+            const n = [...p];
+            n[n.length - 1] = { role:"assistant", text: obj.message || "⚠️ Error." };
+            return n;
+          });
+          return;
+        }
+        if (obj.fallback && obj.message) {
+          setSearching(false);
+          setMsgs(p => {
+            const n = [...p];
+            const last = n[n.length - 1];
+            if (last?.role === "assistant") {
+              n[n.length - 1] = { ...last, text: (last.text || "") + obj.message };
+            }
+            return n;
+          });
+          return;
+        }
+        if (typeof obj.delta === "string" && obj.delta.length) {
+          if (!firstToken) {
+            firstToken = true;
+            setSearching(false);
+          }
+          setMsgs(p => {
+            const n = [...p];
+            const last = n[n.length - 1];
+            if (last?.role === "assistant") {
+              n[n.length - 1] = { ...last, text: (last.text || "") + obj.delta };
+            }
+            return n;
+          });
+        }
+        if (obj.done) setSearching(false);
+      };
+
+      while (!streamHalt) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          applyLine(line);
+        }
+      }
+      if (!streamHalt) applyLine(buf);
       setSearching(false);
-      const msg = e.name === "AbortError"
-        ? "⚠️ Search timed out. Live data is taking too long — please try again."
-        : "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
-      setMsgs(p=>[...p,{ role:"assistant", text:msg }]);
+    } catch (e) {
+      setSearching(false);
+      const errMsg = "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
+      setMsgs(p => {
+        const n = [...p];
+        const last = n[n.length - 1];
+        if (last?.role === "assistant" && !String(last.text || "").trim()) {
+          n[n.length - 1] = { role:"assistant", text: errMsg };
+        }
+        return n;
+      });
     }
     setBusy(false);
   }
@@ -622,11 +714,21 @@ export default function App() {
       React.createElement("div", { style:{ overflow:"hidden", display:"flex", flexDirection:"column", background:"#080a0e" } },
         // Messages
         React.createElement("div", { style:{ flex:1, overflowY:"auto", padding:"20px 28px", display:"flex", flexDirection:"column", gap:16 } },
-          ...msgs.map((m,i) => React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"flex-start", maxWidth:"82%", animation:"fu 0.3s ease both" } },
+          ...msgs.map((m,i) => {
+            const lastAssistantSearching = m.role === "assistant" && i === msgs.length - 1 && searching && !m.text;
+            return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"flex-start", maxWidth:"82%", animation:"fu 0.3s ease both" } },
             React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0, background:m.role==="assistant"?"rgba(232,184,75,0.1)":"#181c24", border:`1px solid ${m.role==="assistant"?"rgba(232,184,75,0.25)":"rgba(255,255,255,0.06)"}` } }, m.role==="assistant"?"🏡":"👤"),
-            React.createElement("div", { style:{ padding:"12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } }, renderText(m.text))
-          )),
-          busy && React.createElement("div", { style:{ display:"flex", gap:10, alignSelf:"flex-start", animation:"fu 0.3s ease both" } },
+            React.createElement("div", { style:{ padding:"12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
+              lastAssistantSearching
+                ? React.createElement(React.Fragment, null,
+                    React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "🔍"),
+                    React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite", marginLeft:8 } }, "Searching live data...")
+                  )
+                : renderText(m.text)
+            )
+            );
+          }),
+          busy && msgs.at(-1)?.role !== "assistant" && React.createElement("div", { style:{ display:"flex", gap:10, alignSelf:"flex-start", animation:"fu 0.3s ease both" } },
             React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, background:"rgba(232,184,75,0.1)", border:"1px solid rgba(232,184,75,0.25)" } }, "🏡"),
             React.createElement("div", { style:{ padding:"12px 16px", borderRadius:12, borderTopLeftRadius:3, background:"#0e1117", border:"1px solid rgba(255,255,255,0.06)", display:"flex", alignItems:"center", gap:8 } },
               searching

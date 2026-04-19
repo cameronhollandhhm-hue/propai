@@ -7,6 +7,11 @@ function getCacheKey(text) {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function extractTextFromAnthropicData(data) {
+  if (!data?.content?.length) return "";
+  return data.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+}
+
 function needsSearch(text) {
   const t = text.toLowerCase();
   const triggers = ["suburb", "score", "deals", "undervalued", "yield", "postcode", "today", "current", "latest", "median", "rent", "vacancy"];
@@ -15,6 +20,43 @@ function needsSearch(text) {
 }
 
 const SYSTEM_PROMPT = `You are PropAI - an expert Australian property investment analyst. Provide sharp, actionable analysis. Score suburbs 1-10 on investment potential. Cover: rental yield, capital growth outlook, vacancy rates, demographics, key risks. Be concise and specific.`;
+
+function sendNdjsonLine(res, obj) {
+  res.write(`${JSON.stringify(obj)}\n`);
+}
+
+function beginNdjson(res) {
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+}
+
+function processSseLine(line, res, state) {
+  if (!line.startsWith("data: ")) return false;
+  const payload = line.slice(6);
+  if (payload === "[DONE]") return false;
+  let evt;
+  try {
+    evt = JSON.parse(payload);
+  } catch {
+    return false;
+  }
+
+  if (evt.type === "error") {
+    sendNdjsonLine(res, {
+      error: "stream",
+      message: evt.error?.message || "⚠️ Stream error from model."
+    });
+    return true;
+  }
+
+  if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
+    const piece = evt.delta.text;
+    state.fullText += piece;
+    sendNdjsonLine(res, { delta: piece });
+  }
+  return false;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -34,7 +76,11 @@ export default async function handler(req, res) {
     const cacheKey = getCacheKey(userText);
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-      return res.status(200).json(cached.data);
+      const text = extractTextFromAnthropicData(cached.data);
+      beginNdjson(res);
+      sendNdjsonLine(res, { delta: text });
+      sendNdjsonLine(res, { done: true, cached: true });
+      return res.end();
     }
 
     const messages = history.map(m => ({
@@ -45,6 +91,7 @@ export default async function handler(req, res) {
     const body = {
       model: "claude-sonnet-4-5",
       max_tokens: 2000,
+      stream: true,
       system: SYSTEM_PROMPT,
       messages
     };
@@ -57,9 +104,6 @@ export default async function handler(req, res) {
       }];
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 55000);
-
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -67,42 +111,91 @@ export default async function handler(req, res) {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01"
       },
-      body: JSON.stringify(body),
-      signal: controller.signal
+      body: JSON.stringify(body)
     });
 
-    clearTimeout(timeoutId);
-
     if (anthropicRes.status === 429) {
-      return res.status(200).json({
-        content: [{ type: "text", text: "⚠️ Busy right now — please try again in a minute." }]
+      beginNdjson(res);
+      sendNdjsonLine(res, {
+        error: "rate_limit",
+        message: "⚠️ Busy right now — please try again in a minute."
+      });
+      return res.end();
+    }
+
+    if (!anthropicRes.ok || !anthropicRes.body) {
+      beginNdjson(res);
+      sendNdjsonLine(res, {
+        error: "upstream",
+        message: "⚠️ Something went wrong. Try rephrasing with suburb + state + price + rent."
+      });
+      return res.end();
+    }
+
+    beginNdjson(res);
+
+    const reader = anthropicRes.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    const state = { fullText: "" };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+
+        const lines = sseBuffer.split(/\r?\n/);
+        sseBuffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (processSseLine(line, res, state)) {
+            return res.end();
+          }
+        }
+      }
+      if (sseBuffer.trim()) {
+        for (const line of sseBuffer.split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          if (processSseLine(line, res, state)) {
+            return res.end();
+          }
+        }
+      }
+    } catch (err) {
+      console.error("analyze stream read error:", err);
+      sendNdjsonLine(res, {
+        error: "stream",
+        message: "⚠️ Connection interrupted. Please try again."
+      });
+      return res.end();
+    }
+
+    const fullText = state.fullText;
+    if (!fullText.trim()) {
+      sendNdjsonLine(res, {
+        fallback: true,
+        message: "⚠️ Couldn't pull enough data. Try including suburb + state + price + rent."
+      });
+    } else {
+      cache.set(cacheKey, {
+        ts: Date.now(),
+        data: { content: [{ type: "text", text: fullText }] }
       });
     }
 
-    if (!anthropicRes.ok) {
-      return res.status(200).json({
-        content: [{ type: "text", text: "⚠️ Something went wrong. Try rephrasing with suburb + state + price + rent." }]
-      });
-    }
-
-    const data = await anthropicRes.json();
-
-    if (!data?.content?.length) {
-      return res.status(200).json({
-        content: [{ type: "text", text: "⚠️ Couldn't pull enough data. Try including suburb + state + price + rent." }]
-      });
-    }
-
-    cache.set(cacheKey, { ts: Date.now(), data });
-    return res.status(200).json(data);
+    sendNdjsonLine(res, { done: true });
+    return res.end();
 
   } catch (err) {
-    if (err.name === "AbortError") {
-      return res.status(200).json({
-        content: [{ type: "text", text: "⚠️ Analysis took too long. Try a more specific query like 'Score Townsville 4810 as investment'." }]
-      });
-    }
     console.error("analyze error:", err);
-    return res.status(500).json({ error: "Server error" });
+    try {
+      res.status(500);
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      sendNdjsonLine(res, { error: "server", message: "⚠️ Server error" });
+      return res.end();
+    } catch {
+      return res.status(500).json({ error: "Server error" });
+    }
   }
 }
