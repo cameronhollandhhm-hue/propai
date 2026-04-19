@@ -948,14 +948,24 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.text(today.toUpperCase(), rightX, 24, { align: "right", charSpace: 0.6 });
     doc.text(`REF · ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
     drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
-    setText(INK);
+    const titleStr = compareMeta
+      ? `${compareMeta.suburbA} vs ${compareMeta.suburbB},`
+      : `${suburbName},`;
+    const titleAvailW = PW - 2 * MX;
+    let fittedSize = 72;
     doc.setFont("times", "normal");
-    doc.setFontSize(72);
-    doc.text(`${suburbName},`, MX, 138);
+    doc.setFontSize(fittedSize);
+    while (doc.getTextWidth(titleStr) > titleAvailW && fittedSize > 36) {
+      fittedSize -= 2;
+      doc.setFontSize(fittedSize);
+    }
+    setText(INK);
+    doc.text(titleStr, MX, 138);
+    const stateY = fittedSize >= 54 ? 170 : 138 + fittedSize * 0.55;
     setText(FOREST);
     doc.setFont("times", "italic");
-    doc.setFontSize(72);
-    doc.text(`${stateCode}.`, MX, 170);
+    doc.setFontSize(fittedSize);
+    doc.text(`${stateCode}.`, MX, stateY);
     setText(INK_SOFT);
     doc.setFont("times", "italic");
     doc.setFontSize(16);
@@ -1006,8 +1016,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.setFont("times", "italic");
     doc.setFontSize(13);
     const thLines = doc.splitTextToSize(thesis, PW - 2 * MX - 20);
-    doc.text(thLines, MX, 90);
-    const gridTop = 112;
+    doc.text(thLines, MX, 88);
+    const gridTop = 106;
     const gridH = 44;
     const gridW = PW - 2 * MX;
     const cellW = gridW / 2;
@@ -1019,27 +1029,28 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_MUTED);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("DEAL SCORE", MX + 8, 122, { charSpace: 0.8 });
-    doc.text("VERDICT", MX + cellW + 8, 122, { charSpace: 0.8 });
+    doc.text("DEAL SCORE", MX + 8, gridTop + 10, { charSpace: 0.8 });
+    doc.text("VERDICT", MX + cellW + 8, gridTop + 10, { charSpace: 0.8 });
     setText(INK);
     doc.setFont("times", "normal");
     doc.setFontSize(30);
-    doc.text(String(score), MX + 8, 138);
+    doc.text(String(score), MX + 8, gridTop + 26);
     setText(INK_MUTED);
     doc.setFont("times", "italic");
     doc.setFontSize(13);
-    doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(String(score)) + 2, 138);
+    doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(String(score)) + 2, gridTop + 26);
     const prettyV = verdict.charAt(0) + verdict.slice(1).toLowerCase();
     setText(verdictColor);
     doc.setFont("times", "italic");
     doc.setFontSize(24);
-    doc.text(prettyV, MX + cellW + 8, 140);
+    doc.text(prettyV, MX + cellW + 8, gridTop + 28);
     const barW = cellW - 16;
+    const barY = gridTop + 32;
     setFill(LINE_SOFT);
-    doc.rect(MX + 8, 144, barW, 1.5, "F");
+    doc.rect(MX + 8, barY, barW, 1.5, "F");
     setFill(FOREST);
-    doc.rect(MX + 8, 144, barW * scorePct, 1.5, "F");
-    let yy = 170;
+    doc.rect(MX + 8, barY, barW * scorePct, 1.5, "F");
+    let yy = 162;
     setText(INK_SOFT);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
@@ -1049,7 +1060,7 @@ function buildBrandedPdf(analysisText, options = {}) {
       doc.text(line, MX, ly);
       ly += 5.4;
     });
-    ly += 4;
+    ly += 2;
     if (execP2 && execP2 !== execP1) {
       const e2 = doc.splitTextToSize(execP2, PW - 2 * MX);
       e2.forEach((line) => {
@@ -1069,7 +1080,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     const cardW = (PW - 2 * MX - 6) / 2;
     const cardH = 32;
     const gap = 6;
-    const startY = 92;
+    const startY = 86;
     metrics.slice(0, 6).forEach((metric, i) => {
       const col = i % 2;
       const row = Math.floor(i / 2);
@@ -1115,8 +1126,12 @@ function buildBrandedPdf(analysisText, options = {}) {
     drawEyebrow("BULL CASE", MX, 42);
     drawTitleTwoTone(`Why ${suburbName}`, "", MX, 60, 28);
     drawTitleTwoTone("is ", "moving.", MX, 72, 28);
-    let workY = 92;
+    const contentBottom = PH - 18;
+    const listStart = 86;
+    const nWork = Math.max(workingItems.length, 1);
+    const slotH = (contentBottom - listStart) / nWork;
     workingItems.forEach((item, i) => {
+      const workY = listStart + i * slotH;
       const num = String(i + 1).padStart(2, "0");
       setText(FOREST);
       doc.setFont("times", "italic");
@@ -1136,12 +1151,11 @@ function buildBrandedPdf(analysisText, options = {}) {
         doc.text(line, MX + 14, by);
         by += 4.5;
       });
-      const itemH = 16 + show.length * 4.5;
-      workY += itemH;
       if (i < workingItems.length - 1) {
+        const divY = listStart + (i + 1) * slotH - 3;
         setStroke(LINE_SOFT);
         doc.setLineWidth(0.15);
-        doc.line(MX, workY - 3, PW - MX, workY - 3);
+        doc.line(MX, divY, PW - MX, divY);
       }
     });
     drawPageFoot("iv");
@@ -1153,8 +1167,12 @@ function buildBrandedPdf(analysisText, options = {}) {
     drawEyebrow("BEAR CASE", MX, 42);
     drawTitleTwoTone("What could", "", MX, 60, 28);
     drawTitleTwoTone("go ", "wrong.", MX, 72, 28);
-    let flagY = 92;
+    const flagContentBottom = PH - 18;
+    const flagListStart = 86;
+    const nFlags = Math.max(flagItems.length, 1);
+    const flagSlotH = (flagContentBottom - flagListStart) / nFlags;
     flagItems.forEach((item, i) => {
+      const flagY = flagListStart + i * flagSlotH;
       setFill([251, 238, 235]);
       doc.circle(MX + 4, flagY + 1, 3.5, "F");
       setText(CRIMSON);
@@ -1175,11 +1193,11 @@ function buildBrandedPdf(analysisText, options = {}) {
         doc.text(line, MX + 11, fy);
         fy += 4.5;
       });
-      flagY += 12 + bs.length * 4.5;
       if (i < flagItems.length - 1) {
+        const divY = flagListStart + (i + 1) * flagSlotH - 3;
         setStroke(LINE_SOFT);
         doc.setLineWidth(0.15);
-        doc.line(MX, flagY - 3, PW - MX, flagY - 3);
+        doc.line(MX, divY, PW - MX, divY);
       }
     });
     drawPageFoot("v");
@@ -1191,8 +1209,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     drawEyebrow("THE VERDICT", MX, 42);
     drawTitleTwoTone("Your walk-away", "", MX, 60, 28);
     drawTitleTwoTone("", "number.", MX, 72, 28);
-    const waY = 88;
-    const waH = 50;
+    const waY = 84;
+    const waH = 44;
     setFill(CREAM);
     doc.rect(MX, waY, PW - 2 * MX, waH, "F");
     setStroke(FOREST);
@@ -1201,11 +1219,11 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(FOREST);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("MAXIMUM PURCHASE PRICE", MX + 10, waY + 10, { charSpace: 0.9 });
+    doc.text("MAXIMUM PURCHASE PRICE", MX + 10, 94, { charSpace: 0.9 });
     setText(FOREST_DEEP);
     doc.setFont("times", "normal");
     doc.setFontSize(32);
-    doc.text(walkAway, MX + 10, waY + 26);
+    doc.text(walkAway, MX + 10, 108);
     setText(INK_SOFT);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
@@ -1213,27 +1231,27 @@ function buildBrandedPdf(analysisText, options = {}) {
       "Targets 4-4.5% gross yield, which preserves acceptable cashflow buffer on a 20% deposit at current rates. Walk away above this number unless premium location or dual-income potential.",
       PW - 2 * MX - 20
     );
-    doc.text(waLines, MX + 10, waY + 36);
-    const fcY = 152;
+    doc.text(waLines, MX + 10, 118);
+    const fcY = 138;
     const fcH = 50;
     setFill(ORANGE);
     doc.rect(MX, fcY, PW - 2 * MX, fcH, "F");
     setText(PAPER);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("FINAL CALL  ·  ACTIONABLE", MX + 10, fcY + 10, { charSpace: 0.9 });
+    doc.text("FINAL CALL  ·  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
     doc.setFont("times", "normal");
     doc.setFontSize(17);
     const fcLines = doc.splitTextToSize(finalCallText.substring(0, 140), PW - 2 * MX - 20);
-    doc.text(fcLines, MX + 10, fcY + 22);
+    doc.text(fcLines, MX + 10, 160);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.text(
       "Otherwise keep watching. The next 6 months will likely produce softer asking prices.",
       MX + 10,
-      fcY + 42
+      178
     );
-    const dY = 216;
+    const dY = 200;
     const dH = 22;
     setFill(CREAM);
     doc.rect(MX, dY, PW - 2 * MX, dH, "F");
@@ -1266,8 +1284,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text(n1, MX, 58);
-    doc.text(n2, MX + (PW - 2 * MX) / 2, 58);
+    doc.text(n1, MX, 64);
+    doc.text(n2, MX + (PW - 2 * MX) / 2, 64);
     const rows = [
       {
         label: "SCORE",
@@ -1282,7 +1300,7 @@ function buildBrandedPdf(analysisText, options = {}) {
         b: s2?.verdict || "-"
       }
     ];
-    let cy = 68;
+    let cy = 86;
     const half = (PW - 2 * MX - 4) / 2;
     rows.forEach((r, ri) => {
       if (cy > PH - 55) return;
