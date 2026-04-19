@@ -41,6 +41,15 @@ For DAILY DEALS output:
 
 For COMPARE (when user asks to compare 2 suburbs) you MUST output this JSON block FIRST before any prose: [[PROPAI_COMPARE]] {"suburb1":{"name":"SUBURB1","score":78,"yield":"4.8%","growth":"+24%","verdict":"BUY"},"suburb2":{"name":"SUBURB2","score":72,"yield":"3.6%","growth":"+19%","verdict":"NEGOTIATE"},"winner":{"name":"SUBURB1","reason":"One sentence why."}} [[/PROPAI_COMPARE]] Then write full prose analysis below. verdict must be BUY / NEGOTIATE / SKIP. Replace ALL example values with real researched data from web search. Never output the placeholder numbers 78, 4.8%, +24%, 72, 3.6%, or +19% — those are examples only.
 
+DATA ACCURACY RULES — CRITICAL:
+1. ALWAYS distinguish suburb-specific data from region-wide data. If you only have Townsville-wide or LGA-wide figures, label them exactly as "(Townsville-wide)" or "(region avg)" — NEVER present them as the suburb's own figure.
+2. For median house/unit price, ONLY use figures you can confirm are for the specific suburb being analysed. If you cannot confirm suburb-level median, write the figure as "~$XXXk (estimated, suburb-level data limited)" and add a Red Flag: "Median based on limited suburb data — verify with agent before offering."
+3. NEVER inflate a suburb median by substituting LGA, postcode-wide, or premium-pocket figures. If Kirwan's true median is ~$580k and only Townsville-wide ($750k+) data is available, report Kirwan's figure as "~$580k (estimated)" NOT "$759k".
+4. Add a Data Confidence line at the end of the KEY METRICS SNAPSHOT that reads: "Data Confidence: HIGH / MEDIUM / LOW" based on how many figures are suburb-specific vs region-wide. HIGH = 5+ suburb-specific metrics. MEDIUM = 2-4. LOW = 0-1.
+5. For any metric where the source is ambiguous or older than 6 months, append "(verify)" after the figure.
+6. Cross-check: If median price seems abnormally high for the suburb (e.g. Kirwan showing $750k+ when typical is $550-620k), STOP and re-search with queries like "Kirwan 4817 median house price 2026 realestate.com.au" or "Kirwan QLD recent sales" before outputting. Never output a figure that fails a sanity check.
+7. When comparing suburbs in COMPARE mode, both suburbs must use the same data source tier. Do not compare a suburb-specific median against a region-wide median.
+
 Rules: Search web first. Max 3-4 lines per section. No padding. RBA rate 3.85%. Always recommend mortgage broker + conveyancer.`;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
