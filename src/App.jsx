@@ -79,19 +79,82 @@ function stripMarkdownForPdf(text) {
   return stripMarkdownSymbols(text);
 }
 
+function cleanPdfTitle(s) {
+  return stripEmojis(stripMarkdownSymbols(String(s || "")))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 92);
+}
+
+/**
+ * Prefer real suburb / location from analysis (emoji lines, "Suburb, STATE", deal/compare).
+ */
 function extractReportTitle(analysisText) {
-  const plain = stripMarkdownForPdf(analysisText);
-  const lines = plain.split("\n").map((l) => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    if (/🏡/.test(line)) return line.replace(/^🏡\s*/, "").replace(/\s+/g, " ").slice(0, 90) || "Suburb analysis";
-    if (/🏠\s*DEAL\s+ANALYSIS/i.test(line) || /DEAL\s+ANALYSIS/i.test(line)) {
-      return line.replace(/^[🏠\s]+/u, "").replace(/\s+/g, " ").slice(0, 90);
+  const raw = String(analysisText || "");
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  const head = lines.slice(0, 45);
+
+  for (const line of head) {
+    const house = line.match(/🏡\s*(.+)/u);
+    if (house) {
+      const t = cleanPdfTitle(house[1]);
+      if (t) return t;
     }
-    if (/🔥\s*TODAY'?S\s+TOP\s+DEALS/i.test(line) || /^TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
   }
-  const first = lines[0];
-  if (first && first.length < 100) return first;
-  return "PropAI analysis";
+
+  const auState = /\b(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b/i;
+  for (const line of head) {
+    const plain = stripMarkdownSymbols(line);
+    const m = plain.match(
+      /^(.+?),\s*(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b\.?$/i
+    );
+    if (m && m[1].length >= 2 && m[1].length < 85) {
+      const t = cleanPdfTitle(`${m[1].trim()}, ${m[2].toUpperCase()}`);
+      if (t) return t;
+    }
+  }
+
+  const blob = raw.slice(0, 3500);
+  const anywhere = blob.match(
+    /\b([A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+){0,2}),\s*(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b/
+  );
+  if (anywhere) {
+    const t = cleanPdfTitle(`${anywhere[1].trim()}, ${anywhere[2].toUpperCase()}`);
+    if (t) return t;
+  }
+
+  for (const line of head) {
+    if (/🏠/u.test(line) && /DEAL\s+ANALYSIS/i.test(line)) {
+      const t = cleanPdfTitle(line.replace(/^🏠\s*/u, ""));
+      if (t) return t;
+    }
+    if (/^DEAL\s+ANALYSIS/i.test(stripMarkdownSymbols(line))) {
+      const t = cleanPdfTitle(line);
+      if (t) return t;
+    }
+  }
+
+  for (const line of head) {
+    if (/🔥/u.test(line) && /TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
+    if (/^TODAY'?S\s+TOP\s+DEALS/i.test(stripMarkdownSymbols(line))) return "Today's top deals";
+  }
+
+  const withPcode = blob.match(
+    /\b([A-Za-z][A-Za-z\s]+?),\s*(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\s+\d{4}\b/i
+  );
+  if (withPcode && withPcode[1].trim().length >= 2) {
+    const t = cleanPdfTitle(`${withPcode[1].trim()}, ${withPcode[2].toUpperCase()}`);
+    if (t) return t;
+  }
+
+  const plainLines = stripMarkdownForPdf(raw).split("\n").map((l) => l.trim()).filter(Boolean);
+  const first = plainLines[0];
+  if (first && first.length >= 8 && first.length < 95 && auState.test(first)) {
+    const t = cleanPdfTitle(first);
+    if (t) return t;
+  }
+
+  return "Property investment report";
 }
 
 function slugForFilename(title) {
@@ -112,7 +175,7 @@ const stripEmojis = (text) =>
 const PDF = {
   forest: [45, 90, 39],
   forestSoft: [61, 106, 55],
-  headerTint: [240, 244, 240],
+  white: [255, 255, 255],
   body: [51, 51, 51],
   muted: [118, 128, 118]
 };
@@ -175,11 +238,11 @@ function buildBrandedPdf(analysisText) {
     doc.addPage();
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, pageW, pageH, "F");
-    doc.setFillColor(...PDF.headerTint);
+    doc.setFillColor(...PDF.forest);
     doc.rect(0, 0, pageW, contHeaderH, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
-    doc.setTextColor(...PDF.forest);
+    doc.setTextColor(...PDF.white);
     doc.text("PropAI — Property report", margin, 6);
     y = contHeaderH + 8;
   };
@@ -190,16 +253,16 @@ function buildBrandedPdf(analysisText) {
 
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageW, pageH, "F");
-  doc.setFillColor(...PDF.headerTint);
+  doc.setFillColor(...PDF.forest);
   doc.rect(0, 0, pageW, headerH, "F");
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
-  doc.setTextColor(...PDF.forest);
+  doc.setTextColor(...PDF.white);
   doc.text("PropAI", margin, 16);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  doc.setTextColor(...PDF.forestSoft);
+  doc.setTextColor(...PDF.white);
   doc.text("Australian property intelligence", margin, 22);
 
   doc.setTextColor(...PDF.forest);
