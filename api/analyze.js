@@ -1,6 +1,6 @@
 import { getMicroburbsPromptBlock } from "./microburbs.js";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map();
@@ -19,6 +19,122 @@ function needsSearch(text) {
   const triggers = ["suburb", "score", "deals", "undervalued", "yield", "postcode", "today", "current", "latest", "median", "rent", "vacancy"];
   const states = ["nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt"];
   return triggers.some(w => t.includes(w)) || states.some(s => t.includes(s));
+}
+
+const AU_STATE_RE = "(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)";
+
+/** "Compare Kirwan vs Aitkenvale QLD" or "Kirwan vs Townsville QLD" */
+function parseCompareQuery(text) {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length > 500) return null;
+  const t = raw.replace(/\s+/g, " ");
+
+  let m = t.match(
+    new RegExp(`^compare\\s+(.+?)\\s+vs\\s+(.+?)\\s+${AU_STATE_RE}\\s*\\.?$`, "i")
+  );
+  if (m) {
+    return {
+      a: cleanCompareSuburb(m[1]),
+      b: cleanCompareSuburb(m[2]),
+      state: m[3].toUpperCase()
+    };
+  }
+
+  m = t.match(
+    new RegExp(`^compare\\s+(.+?)\\s+versus\\s+(.+?)\\s+${AU_STATE_RE}\\s*\\.?$`, "i")
+  );
+  if (m) {
+    return {
+      a: cleanCompareSuburb(m[1]),
+      b: cleanCompareSuburb(m[2]),
+      state: m[3].toUpperCase()
+    };
+  }
+
+  m = t.match(new RegExp(`^(.+?)\\s+vs\\s+(.+?)\\s+${AU_STATE_RE}\\s*\\.?$`, "i"));
+  if (m) {
+    const a = cleanCompareSuburb(m[1]);
+    const b = cleanCompareSuburb(m[2]);
+    if (/^compare$/i.test(a)) return null;
+    return { a, b, state: m[3].toUpperCase() };
+  }
+
+  return null;
+}
+
+function cleanCompareSuburb(s) {
+  return String(s || "")
+    .replace(/^[,:\s]+|[,:\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchSuburbResearch(apiKey, suburb, state) {
+  const body = {
+    model: "claude-sonnet-4-5",
+    max_tokens: 2000,
+    stream: false,
+    system:
+      "You are an Australian property research assistant. Use web search to gather current, suburb-specific data. Summarize in plain bullet points (7–12 lines): typical house price band or median, gross rental yield range, capital growth trend (1–3y), vacancy or demand, demographics or employment drivers, one infrastructure catalyst, one key risk. Focus only on the named suburb and state. If search is thin, say so briefly and add informed regional context.",
+    messages: [
+      {
+        role: "user",
+        content: `Research investment-relevant property metrics for the suburb "${suburb}" in ${state}, Australia. Search the web for fresh data.`
+      }
+    ],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
+  };
+
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!r.ok) {
+    const err = await r.text().catch(() => "");
+    console.error("suburb research failed", suburb, r.status, err.slice(0, 300));
+    return `[Live search unavailable for ${suburb} — use regional knowledge and general investor heuristics.]`;
+  }
+
+  const data = await r.json();
+  const out = extractTextFromAnthropicData(data);
+  return out?.trim()
+    ? out
+    : `[No research text returned for ${suburb} — infer from state-level data.]`;
+}
+
+function buildCompareSystemSuffix(compare, ctxA, ctxB) {
+  const { a, b, state } = compare;
+  return `
+
+---
+SUBURB VS SUBURB COMPARISON (mandatory format)
+The user asked to compare two suburbs in ${state}. Below is PRE-FETCHED web research (one search per suburb). Use it as primary evidence; you may reconcile or qualify with general knowledge.
+
+### ${a}, ${state}
+${ctxA}
+
+### ${b}, ${state}
+${ctxB}
+
+Output requirements:
+1) Start with a short intro line naming both suburbs.
+2) Give a balanced narrative: yield, growth, demand/vacancy, risks — clearly attributed per suburb where possible.
+3) Assign each suburb an investment score out of 100 (PropAI-style).
+4) Per suburb verdict: exactly one of BUY, NEGOTIATE, or SKIP.
+
+5) At the VERY END of your reply, append this machine-readable block exactly (JSON between markers — no markdown inside the JSON, use straight double quotes only):
+
+[[PROPAI_COMPARE]]
+{"suburb1":{"name":"${a}","score":0,"yield":"","growth":"","verdict":"BUY"},"suburb2":{"name":"${b}","score":0,"yield":"","growth":"","verdict":"BUY"},"winner":{"name":"${a}","reason":"One sentence: which suburb wins for a typical investor and why."}}
+[[/PROPAI_COMPARE]]
+
+Replace placeholder numbers/strings with your real assessment. "yield" and "growth" are short human strings (e.g. "4.8% gross", "Moderate"). "winner.name" must be exactly "${a}" or "${b}". "verdict" must be BUY, NEGOTIATE, or SKIP (uppercase).`;
 }
 
 const SYSTEM_PROMPT = `You are PropAI - an expert Australian property investment analyst. Provide sharp, actionable analysis. Score suburbs 1-10 on investment potential. Cover: rental yield, capital growth outlook, vacancy rates, demographics, key risks. Be concise and specific.
@@ -83,10 +199,11 @@ export default async function handler(req, res) {
 
     const latest = history[history.length - 1];
     const userText = (latest?.text || latest?.content || "").slice(0, 1000);
+    const compare = parseCompareQuery(userText);
 
     const cacheKey = getCacheKey(userText);
     const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    if (!compare && cached && Date.now() - cached.ts < CACHE_TTL_MS) {
       const text = extractTextFromAnthropicData(cached.data);
       beginNdjson(res);
       sendNdjsonLine(res, { delta: text });
@@ -107,15 +224,23 @@ export default async function handler(req, res) {
       console.error("microburbs prompt block:", e);
     }
 
+    if (compare) {
+      const [ctxA, ctxB] = await Promise.all([
+        fetchSuburbResearch(apiKey, compare.a, compare.state),
+        fetchSuburbResearch(apiKey, compare.b, compare.state)
+      ]);
+      systemWithData += buildCompareSystemSuffix(compare, ctxA, ctxB);
+    }
+
     const body = {
       model: "claude-sonnet-4-5",
-      max_tokens: 2000,
+      max_tokens: compare ? 3500 : 2000,
       stream: true,
       system: systemWithData,
       messages
     };
 
-    if (needsSearch(userText)) {
+    if (!compare && needsSearch(userText)) {
       body.tools = [{
         type: "web_search_20250305",
         name: "web_search",
@@ -152,6 +277,15 @@ export default async function handler(req, res) {
     }
 
     beginNdjson(res);
+    if (compare) {
+      sendNdjsonLine(res, {
+        compare: {
+          suburbA: compare.a,
+          suburbB: compare.b,
+          state: compare.state
+        }
+      });
+    }
 
     const reader = anthropicRes.body.getReader();
     const decoder = new TextDecoder();
@@ -196,7 +330,7 @@ export default async function handler(req, res) {
         fallback: true,
         message: "⚠️ Couldn't pull enough data. Try including suburb + state + price + rent."
       });
-    } else {
+    } else if (!compare) {
       cache.set(cacheKey, {
         ts: Date.now(),
         data: { content: [{ type: "text", text: fullText }] }

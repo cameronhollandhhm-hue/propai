@@ -42,6 +42,164 @@ For DAILY DEALS output:
 Rules: Search web first. Max 3-4 lines per section. No padding. RBA rate 3.85%. Always recommend mortgage broker + conveyancer.`;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
+const PROP_COMPARE_RE = /\[\[PROPAI_COMPARE\]\]\s*([\s\S]*?)\s*\[\[\/PROPAI_COMPARE\]\]/i;
+
+function stripPropaiCompareBlock(text) {
+  return String(text || "")
+    .replace(PROP_COMPARE_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** @returns {{ data: object, prose: string } | null} */
+function parsePropaiCompareBlock(text) {
+  const raw = String(text || "");
+  const m = raw.match(PROP_COMPARE_RE);
+  if (!m) return null;
+  let data;
+  try {
+    data = JSON.parse(m[1].trim());
+  } catch {
+    return null;
+  }
+  if (!data?.suburb1 || !data?.suburb2) return null;
+  const prose = stripPropaiCompareBlock(raw);
+  return { data, prose };
+}
+
+function normalizeCompareWinner(data) {
+  const w = data?.winner;
+  if (!w) return { name: "", reason: "" };
+  if (typeof w === "string") return { name: w, reason: "" };
+  return {
+    name: w.name || w.suburb || "",
+    reason: w.reason || w.summary || ""
+  };
+}
+
+function verdictBadgeStyles(verdict) {
+  const v = String(verdict || "").toUpperCase();
+  if (v === "BUY") return { bg: "#dcfce7", fg: "#166534", label: "BUY" };
+  if (v === "NEGOTIATE" || v === "WATCH") return { bg: "#ffedd5", fg: "#c2410c", label: v === "WATCH" ? "WATCH" : "NEGOTIATE" };
+  if (v === "SKIP" || v === "AVOID") return { bg: "#fee2e2", fg: "#b91c1c", label: v === "AVOID" ? "AVOID" : "SKIP" };
+  return { bg: "#f3f4f6", fg: "#374151", label: verdict || "—" };
+}
+
+function CompareSuburbCards({ data, stateLabel }) {
+  const s1 = data.suburb1;
+  const s2 = data.suburb2;
+  const win = normalizeCompareWinner(data);
+  const brandGreen = "#2d5a27";
+  const card = (s, side) => {
+    const vb = verdictBadgeStyles(s.verdict);
+    return (
+      <div
+        key={side}
+        style={{
+          flex: "1 1 260px",
+          minWidth: 220,
+          background: "#ffffff",
+          borderRadius: 12,
+          overflow: "hidden",
+          boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+          border: "1px solid rgba(45,90,39,0.15)"
+        }}
+      >
+        <div
+          style={{
+            background: brandGreen,
+            color: "#fff",
+            padding: "12px 14px",
+            fontFamily: "'Syne',sans-serif",
+            fontWeight: 800,
+            fontSize: 15,
+            letterSpacing: "-0.02em"
+          }}
+        >
+          {s.name || "—"}
+          {stateLabel ? (
+            <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.9, marginLeft: 8 }}>{stateLabel}</span>
+          ) : null}
+        </div>
+        <div style={{ padding: "14px 16px", color: "#1f2937", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, lineHeight: 1.65 }}>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Score</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: brandGreen }}>{s.score != null ? `${s.score}/100` : "—"}</div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <span style={{ color: "#6b7280" }}>Yield </span>
+            <span style={{ fontWeight: 600 }}>{s.yield || "—"}</span>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <span style={{ color: "#6b7280" }}>Growth </span>
+            <span style={{ fontWeight: 600 }}>{s.growth || "—"}</span>
+          </div>
+          <div>
+            <span
+              style={{
+                display: "inline-block",
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: vb.bg,
+                color: vb.fg,
+                fontWeight: 700,
+                fontSize: 11,
+                letterSpacing: "0.04em"
+              }}
+            >
+              {vb.label}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "stretch" }}>
+        {card(s1, "1")}
+        {card(s2, "2")}
+      </div>
+      {win.name || win.reason ? (
+        <div
+          style={{
+            marginTop: 14,
+            padding: "14px 16px",
+            borderRadius: 10,
+            background: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)",
+            border: "1px solid rgba(45,90,39,0.25)",
+            color: "#14532d",
+            fontFamily: "'IBM Plex Mono',monospace",
+            fontSize: 12,
+            lineHeight: 1.55
+          }}
+        >
+          <div style={{ fontWeight: 800, fontSize: 11, color: brandGreen, marginBottom: 6, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Winner — {win.name || "See analysis"}
+          </div>
+          <div>{win.reason || ""}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function renderAssistantContent(m) {
+  const parsed = parsePropaiCompareBlock(m.text);
+  const showCompare = !!parsed?.data;
+  return React.createElement(
+    React.Fragment,
+    null,
+    showCompare &&
+      React.createElement(CompareSuburbCards, {
+        data: parsed.data,
+        stateLabel: m.compareMeta?.state
+      }),
+    renderText(parsed?.prose ?? m.text)
+  );
+}
+
 function renderText(text) {
   return text.split("\n").map((line, i) => {
     if (!line.trim()) return React.createElement("div", { key: i, style: { height: 5 } });
@@ -193,8 +351,14 @@ function classifyPdfLine(rawLine) {
   return { kind: "body", text: t };
 }
 
-function buildBrandedPdf(analysisText) {
-  const title = stripEmojis(extractReportTitle(analysisText));
+function buildBrandedPdf(analysisText, options = {}) {
+  const compareMeta = options.compareMeta;
+  const strippedForTitle = stripPropaiCompareBlock(analysisText);
+  const title = compareMeta
+    ? stripEmojis(
+        cleanPdfTitle(`${compareMeta.suburbA} vs ${compareMeta.suburbB} — ${compareMeta.state}`)
+      )
+    : stripEmojis(extractReportTitle(strippedForTitle));
   const dateStr = new Date().toLocaleDateString("en-AU", {
     weekday: "long",
     year: "numeric",
@@ -203,7 +367,7 @@ function buildBrandedPdf(analysisText) {
   });
   const fileDate = new Date().toISOString().slice(0, 10);
 
-  const rawLines = String(analysisText || "").replace(/\r/g, "").split("\n");
+  const rawLines = String(strippedForTitle || "").replace(/\r/g, "").split("\n");
   const blocks = [];
   for (const rawLine of rawLines) {
     const item = classifyPdfLine(rawLine);
@@ -1266,6 +1430,17 @@ export default function App() {
           });
           return;
         }
+        if (obj.compare && typeof obj.compare === "object") {
+          setMsgs((p) => {
+            const n = [...p];
+            const last = n[n.length - 1];
+            if (last?.role === "assistant") {
+              n[n.length - 1] = { ...last, compareMeta: obj.compare };
+            }
+            return n;
+          });
+          return;
+        }
         if (obj.fallback && obj.message) {
           streamedContent += obj.message;
           setSearching(false);
@@ -1273,7 +1448,11 @@ export default function App() {
             const n = [...p];
             const last = n[n.length - 1];
             if (last?.role === "assistant") {
-              n[n.length - 1] = { ...last, text: (last.text || "") + obj.message };
+              n[n.length - 1] = {
+                ...last,
+                text: (last.text || "") + obj.message,
+                compareMeta: last.compareMeta
+              };
             }
             return n;
           });
@@ -1289,7 +1468,11 @@ export default function App() {
             const n = [...p];
             const last = n[n.length - 1];
             if (last?.role === "assistant") {
-              n[n.length - 1] = { ...last, text: (last.text || "") + obj.delta };
+              n[n.length - 1] = {
+                ...last,
+                text: (last.text || "") + obj.delta,
+                compareMeta: last.compareMeta
+              };
             }
             return n;
           });
@@ -1332,6 +1515,7 @@ export default function App() {
   const quickBtns = [
     { label:"🔥 Today's top deals", prompt:"Show me today's top deals under $650k in QLD ranked by deal score" },
     { label:"🏡 Score a suburb", prompt:"Score Geraldton WA as an investment — BUY or AVOID?" },
+    { label:"⚖️ Compare suburbs", prompt:"Compare Kirwan vs Aitkenvale QLD" },
     { label:"💰 Analyse a deal", prompt:"3 bed house Mackay QLD $585,000 rent $600 per week — is this undervalued? Run full deal analysis." },
     { label:"📡 Opportunity Radar", prompt:"Run the opportunity radar for under $600k across QLD and WA — rank by deal score" },
   ];
@@ -1344,7 +1528,7 @@ export default function App() {
     if (last?.role !== "assistant") return;
     const t = String(last.text || "").trim();
     if (!t) return;
-    buildBrandedPdf(t);
+    buildBrandedPdf(t, { compareMeta: last.compareMeta });
   }
 
   const showPdfDownload =
@@ -1399,7 +1583,7 @@ export default function App() {
 
         React.createElement("div", { style:{ margin:"16px 0 8px", height:"1px", background:"rgba(255,255,255,0.06)" } }),
         React.createElement("div", { style:{ fontSize:9, letterSpacing:"0.15em", textTransform:"uppercase", color:"#4b5563", padding:"4px 8px 10px" } }, "How To Use"),
-        ...["Type any suburb name + state", "Paste property: suburb, price, rent", "Ask for today's deals", "Compare 2 suburbs"].map((tip,i) =>
+        ...["Type any suburb name + state", "Paste property: suburb, price, rent", "Ask for today's deals", "Compare: Kirwan vs Aitkenvale QLD"].map((tip,i) =>
           React.createElement("div", { key:i, style:{ padding:"7px 10px", fontSize:10, color:"#4b5563", lineHeight:1.5 } }, `• ${tip}`)
         ),
 
@@ -1416,16 +1600,24 @@ export default function App() {
         // Messages
         React.createElement("div", { style:{ flex:1, overflowY:"auto", padding:"20px 28px", display:"flex", flexDirection:"column", gap:16 } },
           ...msgs.map((m,i) => {
-            const lastAssistantSearching = m.role === "assistant" && i === msgs.length - 1 && searching && !m.text;
-            return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"flex-start", maxWidth:"82%", animation:"fu 0.3s ease both" } },
+            const lastAssistantSearching =
+              m.role === "assistant" &&
+              i === msgs.length - 1 &&
+              !m.text &&
+              (searching || busy);
+            const compareParsed = m.role === "assistant" ? parsePropaiCompareBlock(m.text) : null;
+            const compareLayout = m.role === "assistant" && (!!m.compareMeta || !!compareParsed);
+            return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"flex-start", maxWidth: compareLayout ? "min(960px, 96%)" : "82%", animation:"fu 0.3s ease both" } },
             React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0, background:m.role==="assistant"?"rgba(232,184,75,0.1)":"#181c24", border:`1px solid ${m.role==="assistant"?"rgba(232,184,75,0.25)":"rgba(255,255,255,0.06)"}` } }, m.role==="assistant"?"🏡":"👤"),
-            React.createElement("div", { style:{ padding:"12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
+            React.createElement("div", { style:{ padding: compareLayout ? "14px 16px" : "12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
               lastAssistantSearching
                 ? React.createElement(React.Fragment, null,
                     React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "🔍"),
-                    React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite", marginLeft:8 } }, "Searching live data...")
+                    React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite", marginLeft:8 } }, msgs.at(-1)?.compareMeta ? "Comparing suburbs (2 live searches)…" : "Searching live data...")
                   )
-                : renderText(m.text)
+                : m.role === "assistant"
+                  ? renderAssistantContent(m)
+                  : renderText(m.text)
             )
             );
           }),
