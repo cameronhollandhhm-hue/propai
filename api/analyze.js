@@ -148,7 +148,50 @@ Structure and mandatory sections:
 
 3) Compare mode: When the user asks to compare two suburbs (e.g. "Compare [suburb A] vs [suburb B] [STATE]" or same state implied), respond with a side-by-side comparison including for BOTH suburbs: rental yield context, growth potential, vacancy, indicative entry / median price band, and a one-line verdict (BUY / NEGOTIATE / SKIP) each. Then add a short "Which wins for [criteria]?" summary and a combined VERDICT block if helpful. Use web search when enabled to ground numbers.
 
-4) Owned property — value & performance: If the user says they own a property and asks about its current value, worth, or performance (e.g. capital growth, how it is tracking), do not estimate, guess, or invent a current market value. Do not present hypothetical or modelled dollar figures as fact. Instead, briefly ask them to provide: (a) their current valuation source (e.g. bank, professional valuation, recent desktop), (b) current rental income, and (c) any recent comparable sales they are using. Only after they supply this (or clearly waive specific items) may you give tailored analysis — and you must still distinguish facts they supplied from general market commentary. If they have not provided enough to ground numbers, keep the reply to requirements and framework, not fabricated values.`;
+4) Owned property — value & performance: If the user says they own a property and asks about its current value, worth, or performance (e.g. capital growth, how it is tracking), do not estimate, guess, or invent a current market value. Do not present hypothetical or modelled dollar figures as fact. Instead, briefly ask them to provide: (a) their current valuation source (e.g. bank, professional valuation, recent desktop), (b) current rental income, and (c) any recent comparable sales they are using. Only after they supply this (or clearly waive specific items) may you give tailored analysis — and you must still distinguish facts they supplied from general market commentary. If they have not provided enough to ground numbers, keep the reply to requirements and framework, not fabricated values.
+
+STRUCTURED OUTPUT CONTRACT (MANDATORY — the PDF parser depends on these exact formats):
+
+1. DEAL SCORE — emit this exact line somewhere in the response:
+   [[PROPAI_SCORE]] 78/100
+   (Replace 78 with your actual score 0-100)
+
+2. METRICS TABLE — emit this exact markdown pipe table with ALL SIX rows, exact metric names, and letter grades A+ through F:
+   | Metric | Value | Grade |
+   |---|---|---|
+   | Median Price | $580K | A |
+   | Rental Yield | 4.9% | B+ |
+   | Capital Growth | +24.4% | A+ |
+   | Vacancy Rate | 0.23% | A+ |
+   | Days on Market | 24 | A+ |
+   | Stock on Market | 0.73 mo | A+ |
+
+3. BULL CASE — emit exactly 5 numbered items in this format (each a full sentence explaining the catalyst):
+   1. Infrastructure catalyst: The $195M Townsville Ring Road Stage 5 completion will dramatically improve connectivity and push median prices higher across both suburbs.
+   2. [continue for items 2-5]
+
+4. RED FLAGS — emit exactly 4-5 flags in this EXACT format (Title: body, one per line, blank line between):
+   Flood & Strata Overlays: Townsville has flood history (2019 event). Verify flood maps (council/QRA) and insurance loadings before contract.
+
+   Single-Employer Dependency: Lavarack Barracks (Army) and JCU dominate local employment. A Defence restructure or university funding cut would hit rental demand hard.
+
+   [continue for 2-3 more flags]
+
+5. WALK-AWAY NUMBER — emit this exact line:
+   [[PROPAI_WALKAWAY]] $570K - $760K
+
+6. FINAL VERDICT — emit this exact line:
+   [[PROPAI_VERDICT]] BUY
+
+7. COMPARE BLOCK — if this is a compare request (two suburbs), ALSO emit this JSON block:
+   [[PROPAI_COMPARE]]
+   {
+     "suburb1": {"name": "Kirwan", "score": "78/100", "yield": "4.9%", "growth": "+24.4%", "verdict": "BUY"},
+     "suburb2": {"name": "Aitkenvale", "score": "72/100", "yield": "5.2%", "growth": "+25.5%", "verdict": "HOLD"}
+   }
+   [[/PROPAI_COMPARE]]
+
+All seven blocks are MANDATORY for the PDF to render correctly. Emit them even if you also write prose elsewhere — they can appear anywhere in the response. Do NOT skip any block. Do NOT change the format.`;
 
 function sendNdjsonLine(res, obj) {
   res.write(`${JSON.stringify(obj)}\n`);
