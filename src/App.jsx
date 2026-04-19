@@ -749,12 +749,6 @@ function stripPdfThinkingPreamble(text) {
 function buildBrandedPdf(analysisText, options = {}) {
   const compareMeta = options.compareMeta;
   const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
-  const title = pdfAscii(
-    compareMeta
-      ? cleanPdfTitle(`${compareMeta.suburbA} vs ${compareMeta.suburbB} - ${compareMeta.state}`)
-      : extractReportTitle(src)
-  );
-  const fileDate = new Date().toISOString().slice(0, 10);
 
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   const PW = 210;
@@ -813,7 +807,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.line(MX, 26, PW - MX, 26);
   };
 
-  const drawPageFoot = (pageNum) => {
+  const drawPageFoot = (pageRoman) => {
     setStroke(LINE);
     doc.setLineWidth(0.2);
     doc.line(MX, PH - 18, PW - MX, PH - 18);
@@ -823,7 +817,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.text("PROPAI  ·  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
     doc.setFont("times", "italic");
     doc.setFontSize(9);
-    doc.text(String(pageNum), PW - MX, PH - 12, { align: "right" });
+    doc.text(String(pageRoman), PW - MX, PH - 12, { align: "right" });
   };
 
   const drawEyebrow = (text, x, y) => {
@@ -834,14 +828,19 @@ function buildBrandedPdf(analysisText, options = {}) {
   };
 
   const drawTitleTwoTone = (plain, italic, x, y, size = 26) => {
-    setText(INK);
-    doc.setFont("times", "normal");
-    doc.setFontSize(size);
-    doc.text(plain, x, y);
+    let w = 0;
+    if (plain) {
+      setText(INK);
+      doc.setFont("times", "normal");
+      doc.setFontSize(size);
+      doc.text(plain, x, y);
+      w = doc.getTextWidth(plain);
+    }
     if (italic) {
       setText(FOREST);
       doc.setFont("times", "italic");
-      doc.text(italic, x + doc.getTextWidth(plain) + 1, y);
+      doc.setFontSize(size);
+      doc.text(italic, plain ? x + w + 1 : x, y);
     }
   };
 
@@ -859,68 +858,79 @@ function buildBrandedPdf(analysisText, options = {}) {
   const score = scoreMatch ? scoreMatch[1] : "-";
   const scoreMax = scoreMatch ? scoreMatch[2] : "100";
   const scorePct = scoreMatch ? Math.min(1, parseFloat(score) / parseFloat(scoreMax)) : 0.75;
-  const verdictMatch = src.match(/\b(?:VERDICT[:\s]+)?(BUY|NEGOTIATE|SKIP|WATCH)\b/i);
-  let verdict = verdictMatch ? verdictMatch[1].toUpperCase() : "NEGOTIATE";
-  if (verdict === "WATCH") verdict = "NEGOTIATE";
+  const verdictMatch = src.match(/\b(?:VERDICT[:\s]+)?(BUY|NEGOTIATE|SKIP)\b/i);
+  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : "NEGOTIATE";
   const walkAwayMatch = src.match(/\$(\d+)[Kk]?\s*[-–—]\s*\$(\d+)[Kk]?/);
   const walkAway = walkAwayMatch ? `$${walkAwayMatch[1]}K - $${walkAwayMatch[2]}K` : "See Analysis";
   const thesisMatch = src.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
   const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
   const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
   const verdictColor = verdict === "BUY" ? FOREST : verdict === "SKIP" ? CRIMSON : AMBER;
-  const refPrefix = suburbName.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
+  const refBase = compareMeta ? String(compareMeta.suburbA || "SUB") : suburbName;
+  const refPrefix = refBase.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
 
-  const parseMarkdownTables = (text) => {
-    const lines = text.split("\n");
-    const tables = [];
-    let i = 0;
-    while (i < lines.length) {
-      if (!lines[i].includes("|")) {
-        i += 1;
-        continue;
-      }
-      const chunk = [];
-      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
-        const row = lines[i];
-        if (/^[\s|:\-]+$/.test(row.replace(/[^|\-:\s]/g, "")) && /-/.test(row)) {
-          i += 1;
-          continue;
-        }
-        const cells = row
-          .split("|")
-          .map((c) => clean(c.trim()))
-          .filter((c) => c.length > 0);
-        if (cells.length) chunk.push(cells);
-        i += 1;
-      }
-      if (chunk.length >= 2) tables.push(chunk);
-      i += 1;
-    }
-    return tables;
-  };
-
-  const extractSection = (labelRe) => {
-    const m = src.match(
-      new RegExp(`${labelRe}[\\s\\S]*?(?=\\n\\s*(?:#{1,3}\\s|[A-Z][A-Z \\-]{2,30}:|🔥|🏡|⭐|📊|💸|⚠️|🎯|🧠|💡|📈|🔍|🔁|$))`, "i")
-    );
-    return m ? clean(m[0].replace(/^[^\n]+\n/, "").trim()) : "";
-  };
-
-  const redFlagsBlock = extractSection("RED FLAGS");
-  const metricsHint = extractSection("📊 DATA") || extractSection("KEY METRICS") || extractSection("SCORE BREAKDOWN");
-  const marketBlock = extractSection("📈 MARKET") || extractSection("⚡ QUICK TAKE");
-  const walkBlock =
-    extractSection("🎯 NEGOTIATION") ||
-    extractSection("Walk-Away") ||
-    extractSection("WALK-AWAY") ||
-    extractSection("Walk Away");
-
-  const longParas = src
-    .split(/\n\n/)
+  const execParas = src
+    .split(/\n\n+/)
     .map((p) => clean(stripMarkdownSymbols(p)))
-    .filter((p) => p.length > 80);
-  const execP1 = longParas[0] || clean(thesis);
-  const execP2 = longParas[1] || longParas[0] || "";
+    .filter((p) => p.length > 80 && !p.trim().startsWith("#") && !p.includes("|"))
+    .slice(0, 2);
+  const execP1 = execParas[0] || thesis;
+  const execP2 = execParas[1] || "";
+
+  const metricRegex = /\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([A-F][+\-]?)\s*\|/g;
+  const metrics = [];
+  let mm;
+  while ((mm = metricRegex.exec(src)) !== null && metrics.length < 6) {
+    metrics.push({ label: clean(mm[1]), value: clean(mm[2]), grade: clean(mm[3]) });
+  }
+  const placeholders = [
+    { label: "Median Price", value: "See analysis", grade: "A" },
+    { label: "Rental Yield", value: "See analysis", grade: "B+" },
+    { label: "Capital Growth", value: "See analysis", grade: "A+" },
+    { label: "Vacancy Rate", value: "See analysis", grade: "A+" },
+    { label: "Days on Market", value: "See analysis", grade: "A+" },
+    { label: "Stock on Market", value: "See analysis", grade: "A+" }
+  ];
+  while (metrics.length < 6) {
+    metrics.push(placeholders[metrics.length]);
+  }
+
+  const workingSection = src.match(
+    /(?:WHAT'S WORKING|What's Working)[:\s]*([\s\S]*?)(?:RED FLAGS|Red Flags|INVESTOR EDGE|Investor Edge)/i
+  );
+  const workingText = workingSection ? workingSection[1] : src;
+  const workingItems = [];
+  const numRe =
+    /(?:^|\n)\s*(\d+)\.\s+\*?\*?([^\n*]+?)\*?\*?\s*\n([\s\S]*?)(?=\n\s*\d+\.|\n\n[A-Z]|$)/g;
+  let wm;
+  while ((wm = numRe.exec(workingText)) !== null && workingItems.length < 5) {
+    workingItems.push({
+      title: clean(wm[2]).replace(/\*\*/g, ""),
+      body: clean(wm[3]).substring(0, 300)
+    });
+  }
+
+  const flagsSection = src.match(
+    /(?:RED FLAGS|Red Flags)[:\s]*([\s\S]*?)(?:INVESTOR EDGE|Investor Edge|WALK-AWAY|Walk-Away|FINAL CALL|Final Call|$)/i
+  );
+  const flagsText = flagsSection ? flagsSection[1] : "";
+  const flagItems = [];
+  const flagRe =
+    /(?:^|\n)[\s\-•*▸]*\*?\*?([A-Z][^:*\n]{5,80}):\*?\*?\s*([^\n]+(?:\n(?!\s*[-•*▸]|\s*\n|\s*\*\*|\s*[A-Z][a-z]+:)[^\n]+)*)/g;
+  let fm;
+  while ((fm = flagRe.exec(flagsText)) !== null && flagItems.length < 4) {
+    flagItems.push({
+      title: clean(fm[1]).replace(/\*\*/g, ""),
+      body: clean(fm[2]).substring(0, 280)
+    });
+  }
+
+  const finalCallMatch = src.match(/(?:FINAL CALL|Final Call)[^\n:]*[:\s]+([^\n]+)/i);
+  const finalCallText = finalCallMatch
+    ? clean(finalCallMatch[1])
+    : `${verdict} if you can negotiate below Walk-Away and secure target yield.`;
+
+  const compareBlockParsed = parsePropaiCompareBlock(analysisText);
 
   const drawCover = () => {
     paintBg(CREAM);
@@ -1019,8 +1029,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.setFont("times", "italic");
     doc.setFontSize(13);
     doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(String(score)) + 2, 138);
-    const prettyV =
-      verdict.charAt(0) + verdict.slice(1).toLowerCase();
+    const prettyV = verdict.charAt(0) + verdict.slice(1).toLowerCase();
     setText(verdictColor);
     doc.setFont("times", "italic");
     doc.setFontSize(24);
@@ -1031,129 +1040,305 @@ function buildBrandedPdf(analysisText, options = {}) {
     setFill(FOREST);
     doc.rect(MX + 8, 144, barW * scorePct, 1.5, "F");
     let yy = 170;
+    setText(INK_SOFT);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    setText(INK);
     const e1 = doc.splitTextToSize(execP1, PW - 2 * MX);
-    doc.text(e1, MX, yy);
-    yy += e1.length * 5 + 4;
+    let ly = yy;
+    e1.forEach((line) => {
+      doc.text(line, MX, ly);
+      ly += 5.4;
+    });
+    ly += 4;
     if (execP2 && execP2 !== execP1) {
       const e2 = doc.splitTextToSize(execP2, PW - 2 * MX);
-      doc.text(e2, MX, yy);
-    }
-    drawPageFoot(2);
-  };
-
-  const drawMetrics = (pageNum) => {
-    paintBg(PAPER);
-    drawPageHead(`${suburbName} · Metrics`);
-    drawEyebrow("KEY METRICS & DATA", MX, 42);
-    setText(INK);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    let yy = 54;
-    const tables = parseMarkdownTables(src);
-    if (tables.length) {
-      tables.slice(0, 2).forEach((table) => {
-        const rows = table.slice(0, 10);
-        const cardGap = 3;
-        const cardW = (PW - 2 * MX - cardGap) / 2;
-        let rowY = yy;
-        for (const row of rows) {
-          if (rowY > PH - 52) break;
-          for (let i = 0; i < 2; i += 1) {
-            const cell = row[i] || "";
-            const x0 = MX + i * (cardW + cardGap);
-            setFill(CREAM_DEEP);
-            setStroke(LINE_SOFT);
-            doc.setLineWidth(0.2);
-            doc.rect(x0, rowY, cardW, 18, "FD");
-            setText(INK_SOFT);
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(8);
-            const cl = doc.splitTextToSize(cell, cardW - 4);
-            doc.text(cl, x0 + 2, rowY + 5);
-          }
-          rowY += 22;
-        }
-        yy = rowY + 8;
+      e2.forEach((line) => {
+        doc.text(line, MX, ly);
+        ly += 5.4;
       });
-    } else {
-      const ml = doc.splitTextToSize(metricsHint || clean(src.slice(0, 1200)), PW - 2 * MX);
-      doc.text(ml, MX, yy);
-      yy += ml.length * 5;
     }
-    drawEyebrow("DATA SNAPSHOT", MX, Math.min(yy + 8, PH - 40));
-    setText(INK_MUTED);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.text("Data Confidence: MEDIUM (verify figures with local agents).", MX, Math.min(yy + 16, PH - 30));
-    drawPageFoot(pageNum);
+    drawPageFoot("ii");
   };
 
-  const drawWhatsWorking = (pageNum) => {
+  const drawMetrics = () => {
     paintBg(PAPER);
-    drawPageHead(`${suburbName} · Outlook`);
-    drawEyebrow("WHAT'S WORKING", MX, 42);
-    setText(INK);
-    doc.setFont("times", "italic");
-    doc.setFontSize(13);
-    const body = marketBlock || clean(src.slice(0, 800));
-    const lines = doc.splitTextToSize(body, PW - 2 * MX);
-    doc.text(lines, MX, 56);
-    drawPageFoot(pageNum);
+    drawPageHead("KEY METRICS");
+    drawEyebrow("METRICS SNAPSHOT", MX, 42);
+    drawTitleTwoTone("Seven numbers", "", MX, 60, 28);
+    drawTitleTwoTone("that tell the ", "story.", MX, 72, 28);
+    const cardW = (PW - 2 * MX - 6) / 2;
+    const cardH = 32;
+    const gap = 6;
+    const startY = 92;
+    metrics.slice(0, 6).forEach((metric, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = MX + col * (cardW + gap);
+      const y = startY + row * (cardH + gap);
+      const isFeature = i === 3 || i === 5;
+      if (isFeature) {
+        setFill(FOREST);
+        doc.rect(x, y, cardW, cardH, "F");
+        setText([200, 195, 180]);
+      } else {
+        setFill(CREAM);
+        setStroke(LINE);
+        doc.setLineWidth(0.2);
+        doc.rect(x, y, cardW, cardH, "FD");
+        setText(INK_MUTED);
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(metric.label.toUpperCase(), x + 5, y + 7, { charSpace: 0.6 });
+      setText(isFeature ? CREAM : INK);
+      doc.setFont("times", "normal");
+      doc.setFontSize(20);
+      doc.text(metric.value.substring(0, 18), x + 5, y + 20);
+      const gradeW = 12;
+      const gradeH = 6;
+      const gradeX = x + cardW - 17;
+      const gradeY = y + 14;
+      const isTopGrade = metric.grade.startsWith("A");
+      setFill(isTopGrade ? (isFeature ? CREAM : FOREST) : CREAM_DEEP);
+      doc.roundedRect(gradeX, gradeY, gradeW, gradeH, 3, 3, "F");
+      setText(isTopGrade ? (isFeature ? FOREST : CREAM) : FOREST);
+      doc.setFont("times", "italic");
+      doc.setFontSize(9);
+      doc.text(metric.grade, gradeX + gradeW / 2, gradeY + 4.2, { align: "center" });
+    });
+    drawPageFoot("iii");
   };
 
-  const drawRedFlags = (pageNum) => {
+  const drawWhatsWorking = () => {
     paintBg(PAPER);
-    drawPageHead(`${suburbName} · Risks`);
-    drawEyebrow("RED FLAGS", MX, 42);
-    setText(CRIMSON);
+    drawPageHead("WHAT'S WORKING");
+    drawEyebrow("BULL CASE", MX, 42);
+    drawTitleTwoTone(`Why ${suburbName}`, "", MX, 60, 28);
+    drawTitleTwoTone("is ", "moving.", MX, 72, 28);
+    let workY = 92;
+    workingItems.forEach((item, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      setText(FOREST);
+      doc.setFont("times", "italic");
+      doc.setFontSize(22);
+      doc.text(num, MX, workY);
+      setText(INK);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(item.title.substring(0, 55), MX + 14, workY - 2);
+      setText(INK_SOFT);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      const bodyLines = doc.splitTextToSize(item.body, PW - 2 * MX - 14);
+      const show = bodyLines.slice(0, 3);
+      let by = workY + 4;
+      show.forEach((line) => {
+        doc.text(line, MX + 14, by);
+        by += 4.5;
+      });
+      const itemH = 16 + show.length * 4.5;
+      workY += itemH;
+      if (i < workingItems.length - 1) {
+        setStroke(LINE_SOFT);
+        doc.setLineWidth(0.15);
+        doc.line(MX, workY - 3, PW - MX, workY - 3);
+      }
+    });
+    drawPageFoot("iv");
+  };
+
+  const drawRedFlags = () => {
+    paintBg(PAPER);
+    drawPageHead("RED FLAGS");
+    drawEyebrow("BEAR CASE", MX, 42);
+    drawTitleTwoTone("What could", "", MX, 60, 28);
+    drawTitleTwoTone("go ", "wrong.", MX, 72, 28);
+    let flagY = 92;
+    flagItems.forEach((item, i) => {
+      setFill([251, 238, 235]);
+      doc.circle(MX + 4, flagY + 1, 3.5, "F");
+      setText(CRIMSON);
+      doc.setFont("times", "italic");
+      doc.setFontSize(13);
+      doc.text("!", MX + 4, flagY + 3, { align: "center" });
+      setText(CRIMSON);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.text(item.title.substring(0, 50), MX + 11, flagY);
+      setText(INK_SOFT);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      const bLines = doc.splitTextToSize(item.body, PW - 2 * MX - 11);
+      const bs = bLines.slice(0, 3);
+      let fy = flagY + 6;
+      bs.forEach((line) => {
+        doc.text(line, MX + 11, fy);
+        fy += 4.5;
+      });
+      flagY += 12 + bs.length * 4.5;
+      if (i < flagItems.length - 1) {
+        setStroke(LINE_SOFT);
+        doc.setLineWidth(0.15);
+        doc.line(MX, flagY - 3, PW - MX, flagY - 3);
+      }
+    });
+    drawPageFoot("v");
+  };
+
+  const drawWalkAway = () => {
+    paintBg(PAPER);
+    drawPageHead("THE DECISION");
+    drawEyebrow("THE VERDICT", MX, 42);
+    drawTitleTwoTone("Your walk-away", "", MX, 60, 28);
+    drawTitleTwoTone("", "number.", MX, 72, 28);
+    const waY = 88;
+    const waH = 50;
+    setFill(CREAM);
+    doc.rect(MX, waY, PW - 2 * MX, waH, "F");
+    setStroke(FOREST);
+    doc.setLineWidth(0.8);
+    doc.rect(MX, waY, PW - 2 * MX, waH);
+    setText(FOREST);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    const rf = redFlagsBlock || "Review flood, insurance, and supply risks in the full analysis.";
-    const rfl = doc.splitTextToSize(rf, PW - 2 * MX);
-    doc.text(rfl, MX, 56);
-    drawPageFoot(pageNum);
+    doc.setFontSize(7);
+    doc.text("MAXIMUM PURCHASE PRICE", MX + 10, waY + 10, { charSpace: 0.9 });
+    setText(FOREST_DEEP);
+    doc.setFont("times", "normal");
+    doc.setFontSize(32);
+    doc.text(walkAway, MX + 10, waY + 26);
+    setText(INK_SOFT);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    const waLines = doc.splitTextToSize(
+      "Targets 4-4.5% gross yield, which preserves acceptable cashflow buffer on a 20% deposit at current rates. Walk away above this number unless premium location or dual-income potential.",
+      PW - 2 * MX - 20
+    );
+    doc.text(waLines, MX + 10, waY + 36);
+    const fcY = 152;
+    const fcH = 50;
+    setFill(ORANGE);
+    doc.rect(MX, fcY, PW - 2 * MX, fcH, "F");
+    setText(PAPER);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("FINAL CALL  ·  ACTIONABLE", MX + 10, fcY + 10, { charSpace: 0.9 });
+    doc.setFont("times", "normal");
+    doc.setFontSize(17);
+    const fcLines = doc.splitTextToSize(finalCallText.substring(0, 140), PW - 2 * MX - 20);
+    doc.text(fcLines, MX + 10, fcY + 22);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(
+      "Otherwise keep watching. The next 6 months will likely produce softer asking prices.",
+      MX + 10,
+      fcY + 42
+    );
+    const dY = 216;
+    const dH = 22;
+    setFill(CREAM);
+    doc.rect(MX, dY, PW - 2 * MX, dH, "F");
+    setStroke(INK_MUTED);
+    doc.setLineWidth(0.5);
+    doc.line(MX, dY, MX, dY + dH);
+    setText(INK_MUTED);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.text("NOT FINANCIAL ADVICE.", MX + 5, dY + 7, { charSpace: 0.5 });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    const discLines = doc.splitTextToSize(
+      "Consult a licensed adviser, mortgage broker, and conveyancer before making decisions. PropAI reports are research tools, not regulated financial product recommendations.",
+      PW - 2 * MX - 10
+    );
+    doc.text(discLines, MX + 5, dY + 13);
+    drawPageFoot("vi");
   };
 
-  const drawWalkAway = (pageNum) => {
+  const drawCompareHeadToHead = () => {
     paintBg(PAPER);
-    drawPageHead(`${suburbName} · Strategy`);
-    drawEyebrow("WALK-AWAY & NEGOTIATION", MX, 42);
+    drawPageHead("HEAD-TO-HEAD");
+    const data = compareBlockParsed?.data;
+    const s1 = data?.suburb1;
+    const s2 = data?.suburb2;
+    const win = normalizeCompareWinner(data || {});
+    const n1 = clean(String(s1?.name || compareMeta?.suburbA || "Suburb A"));
+    const n2 = clean(String(s2?.name || compareMeta?.suburbB || "Suburb B"));
     setText(INK);
-    doc.setFont("helvetica", "normal");
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    const wb = walkBlock || walkAway;
-    const wl = doc.splitTextToSize(wb, PW - 2 * MX);
-    doc.text(wl, MX, 56);
-    setStroke(ORANGE);
-    doc.setLineWidth(0.3);
-    doc.line(MX, 56 + wl.length * 5 + 6, PW - MX, 56 + wl.length * 5 + 6);
-    setText(INK_MUTED);
-    doc.setFontSize(8);
-    doc.text(
-      "Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer before making decisions.",
-      MX,
-      56 + wl.length * 5 + 12
-    );
-    drawPageFoot(pageNum);
+    doc.text(n1, MX, 58);
+    doc.text(n2, MX + (PW - 2 * MX) / 2, 58);
+    const rows = [
+      {
+        label: "SCORE",
+        a: s1?.score != null ? `${s1.score}/100` : "-",
+        b: s2?.score != null ? `${s2.score}/100` : "-"
+      },
+      { label: "YIELD", a: s1?.yield || "-", b: s2?.yield || "-" },
+      { label: "GROWTH", a: s1?.growth || "-", b: s2?.growth || "-" },
+      {
+        label: "VERDICT",
+        a: s1?.verdict || "-",
+        b: s2?.verdict || "-"
+      }
+    ];
+    let cy = 68;
+    const half = (PW - 2 * MX - 4) / 2;
+    rows.forEach((r, ri) => {
+      if (cy > PH - 55) return;
+      [0, 1].forEach((side) => {
+        const x = MX + side * (half + 4);
+        setFill(CREAM);
+        setStroke(LINE);
+        doc.setLineWidth(0.2);
+        doc.rect(x, cy, half, 22, "FD");
+        setText(INK_MUTED);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.5);
+        doc.text(r.label, x + 4, cy + 6, { charSpace: 0.5 });
+        setText(INK);
+        doc.setFont("times", "normal");
+        doc.setFontSize(14);
+        const val = side === 0 ? r.a : r.b;
+        doc.text(String(val).substring(0, 22), x + 4, cy + 16);
+      });
+      cy += 26;
+    });
+    if (win.name) {
+      setText(FOREST);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(`Winner: ${win.name}`, MX, cy + 4);
+      if (win.reason) {
+        setText(INK_SOFT);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        const wr = doc.splitTextToSize(clean(win.reason), PW - 2 * MX);
+        doc.text(wr.slice(0, 3), MX, cy + 12);
+      }
+    }
+    drawPageFoot("vii");
   };
 
   drawCover();
   doc.addPage();
   drawExecSummary();
   doc.addPage();
-  drawMetrics(3);
+  drawMetrics();
   doc.addPage();
-  drawWhatsWorking(4);
+  drawWhatsWorking();
   doc.addPage();
-  drawRedFlags(5);
+  drawRedFlags();
   doc.addPage();
-  drawWalkAway(6);
+  drawWalkAway();
+  if (compareMeta) {
+    doc.addPage();
+    drawCompareHeadToHead();
+  }
 
-  const fname = `PropAI-Report-${slugForFilename(title)}-${fileDate}.pdf`;
-  doc.save(fname);
+  const safeSub = clean(suburbName).replace(/\s+/g, "-") || "Report";
+  const fileName = `PropAI-Report-${safeSub}-${stateCode}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  doc.save(fileName);
 }
 
 const FREE_LIMIT = 3;
