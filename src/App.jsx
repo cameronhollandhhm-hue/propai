@@ -369,6 +369,29 @@ function buildBrandedPdf(analysisText) {
 
 const FREE_LIMIT = 3;
 
+/** Free-tier usage: only count when the assistant reply is real analysis, not API/stream failures. */
+function shouldCountFreeSuccessfulAnalysis(text, hadNdjsonError) {
+  if (hadNdjsonError) return false;
+  const t = String(text || "").trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  const failures = [
+    "timed out",
+    "something went wrong",
+    "couldn't pull",
+    "could not pull",
+    "no response stream",
+    "connection interrupted",
+    "busy right now",
+    "try again in",
+    "analysis took too long",
+    "too long",
+    "server error",
+    "couldn't pull enough"
+  ];
+  return !failures.some((phrase) => lower.includes(phrase));
+}
+
 // ─── LANDING PAGE ─────────────────────────────────────────────────────────────
 function Landing({ onStart }) {
   return (
@@ -832,8 +855,10 @@ export default function App() {
     setInput("");
     setBusy(true);
     setSearching(true);
-    setUsageCount(c => c + 1);
     try {
+      let streamedContent = "";
+      let ndjsonError = false;
+
       const res = await fetch("/api/analyze", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
@@ -888,15 +913,18 @@ export default function App() {
         }
         if (obj.error) {
           streamHalt = true;
+          ndjsonError = true;
+          streamedContent = obj.message || "⚠️ Error.";
           setSearching(false);
           setMsgs(p => {
             const n = [...p];
-            n[n.length - 1] = { role:"assistant", text: obj.message || "⚠️ Error." };
+            n[n.length - 1] = { role:"assistant", text: streamedContent };
             return n;
           });
           return;
         }
         if (obj.fallback && obj.message) {
+          streamedContent += obj.message;
           setSearching(false);
           setMsgs(p => {
             const n = [...p];
@@ -909,6 +937,7 @@ export default function App() {
           return;
         }
         if (typeof obj.delta === "string" && obj.delta.length) {
+          streamedContent += obj.delta;
           if (!firstToken) {
             firstToken = true;
             setSearching(false);
@@ -938,6 +967,10 @@ export default function App() {
       }
       if (!streamHalt) applyLine(buf);
       setSearching(false);
+
+      if (!isPro && shouldCountFreeSuccessfulAnalysis(streamedContent, ndjsonError)) {
+        setUsageCount((c) => c + 1);
+      }
     } catch (e) {
       setSearching(false);
       const errMsg = "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
