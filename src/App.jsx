@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { jsPDF } from "jspdf";
 
 // ─── MEGA SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -390,6 +390,349 @@ function shouldCountFreeSuccessfulAnalysis(text, hadNdjsonError) {
     "couldn't pull enough"
   ];
   return !failures.some((phrase) => lower.includes(phrase));
+}
+
+function extractPurchasePriceFromText(text) {
+  const s = String(text || "");
+  const candidates = [];
+  const re = /\$\s*([\d,]+(?:\.\d+)?)\s*(k|K)?/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    let v = parseFloat(m[1].replace(/,/g, ""));
+    if (m[2]) v *= 1000;
+    if (v >= 2e4 && v <= 5e7) candidates.push({ v, idx: m.index });
+  }
+  if (!candidates.length) return null;
+  const lower = s.toLowerCase();
+  let best = candidates[0].v;
+  let bestScore = -Infinity;
+  for (const { v, idx } of candidates) {
+    const slice = lower.slice(Math.max(0, idx - 50), Math.min(lower.length, idx + 50));
+    let score = 0;
+    if (/purchase|asking|price|median|buy|valuation|market|listing|deal\s*score|walk\s*away|target\s*\$/.test(slice)) score += 3;
+    if (/rent\s*\$|\$\s*[\d,]+\s*(?:\/|per)\s*week|weekly\s*rent|\/wk\b|pw\b/.test(slice)) score -= 2;
+    if (score > bestScore || (score === bestScore && v > best)) {
+      bestScore = score;
+      best = v;
+    }
+  }
+  return best;
+}
+
+function extractWeeklyRentFromText(text) {
+  const s = String(text || "");
+  const patterns = [
+    /rent\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)\s*week/i,
+    /\$\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)\s*week/i,
+    /weekly\s*rent[:\s]+\$?\s*([\d,]+)/i,
+    /([\d,]+)\s*\$\/wk/i,
+    /\$\s*([\d,]+)\s*pw\b/i
+  ];
+  for (const p of patterns) {
+    const x = s.match(p);
+    if (x) return parseFloat(x[1].replace(/,/g, ""));
+  }
+  return null;
+}
+
+function shouldShowMortgageCalculator(text) {
+  if (!text?.trim()) return false;
+  if (!shouldCountFreeSuccessfulAnalysis(text, false)) return false;
+  const t = text.toLowerCase();
+  const hasMoney = /\$\s*[\d,]+/.test(text) || /\b\d{2,3},\d{3}\b/.test(text) || /\d{2,3}k\b/i.test(text);
+  if (!hasMoney) return false;
+  return /deal|score|suburb|purchase|median|yield|rent|valuation|cash\s*flow|\/100|property|walk.?away|negotiat/i.test(t);
+}
+
+function computeMortgageOutputs(price, depositPct, annualRatePct, termYears, repaymentMode, weeklyRent) {
+  const loan = Math.max(0, price * (1 - depositPct / 100));
+  const monthlyRate = annualRatePct / 100 / 12;
+  const numPayments = termYears * 12;
+  let monthlyRepayment = 0;
+  if (loan > 0 && monthlyRate >= 0) {
+    if (repaymentMode === "io") {
+      monthlyRepayment = loan * monthlyRate;
+    } else if (monthlyRate === 0) {
+      monthlyRepayment = loan / numPayments;
+    } else {
+      monthlyRepayment =
+        (loan * monthlyRate * Math.pow(1 + monthlyRate, numPayments)) /
+        (Math.pow(1 + monthlyRate, numPayments) - 1);
+    }
+  }
+  const weeklyRepayment = (monthlyRepayment * 12) / 52;
+  const monthlyRentEquiv = (weeklyRent * 52) / 12;
+  const monthlyCashflow = monthlyRentEquiv - monthlyRepayment;
+  const annualCashflow = monthlyCashflow * 12;
+  const grossYieldPct = price > 0 ? ((weeklyRent * 52) / price) * 100 : 0;
+  return {
+    loan,
+    monthlyRepayment,
+    weeklyRepayment,
+    monthlyRentEquiv,
+    monthlyCashflow,
+    annualCashflow,
+    grossYieldPct
+  };
+}
+
+function formatAud(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  return Number(n).toLocaleString("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 });
+}
+
+function formatAudPlain(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  return Number(n).toLocaleString("en-AU", { maximumFractionDigits: 0 });
+}
+
+function MortgageCalculatorPanel({ analysisText }) {
+  const parsed = useMemo(
+    () => ({
+      price: extractPurchasePriceFromText(analysisText),
+      rent: extractWeeklyRentFromText(analysisText)
+    }),
+    [analysisText]
+  );
+
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState(650000);
+  const [depositPct, setDepositPct] = useState(20);
+  const [ratePct, setRatePct] = useState(6.5);
+  const [termYears, setTermYears] = useState(30);
+  const [repaymentMode, setRepaymentMode] = useState("pi");
+  const [weeklyRent, setWeeklyRent] = useState(600);
+
+  useEffect(() => {
+    if (parsed.price != null) setPrice(Math.round(parsed.price));
+    if (parsed.rent != null) setWeeklyRent(Math.round(parsed.rent));
+  }, [parsed.price, parsed.rent]);
+
+  const out = useMemo(
+    () => computeMortgageOutputs(price, depositPct, ratePct, termYears, repaymentMode, weeklyRent),
+    [price, depositPct, ratePct, termYears, repaymentMode, weeklyRent]
+  );
+
+  const inp = {
+    background: "#181c24",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 8,
+    padding: "8px 10px",
+    color: "#e8e6e0",
+    fontFamily: "'IBM Plex Mono',monospace",
+    fontSize: 13,
+    width: "100%"
+  };
+  const lab = { fontSize: 10, color: "#6b7280", marginBottom: 4, letterSpacing: "0.04em", textTransform: "uppercase" };
+  const row = { display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 };
+  const cell = { flex: "1 1 140px", minWidth: 120 };
+
+  return (
+    <div style={{ padding: "0 28px 12px", flexShrink: 0 }}>
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          style={{
+            width: "100%",
+            padding: "10px 16px",
+            borderRadius: 10,
+            border: "1px solid rgba(232,184,75,0.35)",
+            background: "rgba(232,184,75,0.06)",
+            color: "#e8b84b",
+            fontFamily: "'IBM Plex Mono',monospace",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer"
+          }}
+        >
+          Calculate Mortgage
+        </button>
+      ) : (
+        <div
+          style={{
+            background: "#0e1117",
+            border: "1px solid rgba(232,184,75,0.22)",
+            borderRadius: 12,
+            padding: 16,
+            animation: "fu 0.25s ease both"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14, color: "#e8e6e0" }}>
+              Mortgage calculator
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              style={{
+                fontSize: 11,
+                color: "#6b7280",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "'IBM Plex Mono',monospace"
+              }}
+            >
+              Collapse
+            </button>
+          </div>
+
+          <div style={row}>
+            <div style={cell}>
+              <div style={lab}>Purchase price</div>
+              <input
+                type="number"
+                min={0}
+                value={price}
+                onChange={(e) => setPrice(Number(e.target.value) || 0)}
+                style={inp}
+              />
+            </div>
+            <div style={cell}>
+              <div style={lab}>Deposit %</div>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={depositPct}
+                onChange={(e) => setDepositPct(Number(e.target.value) || 0)}
+                style={inp}
+              />
+            </div>
+            <div style={cell}>
+              <div style={lab}>Interest rate % p.a.</div>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                step={0.05}
+                value={ratePct}
+                onChange={(e) => setRatePct(Number(e.target.value) || 0)}
+                style={inp}
+              />
+            </div>
+          </div>
+
+          <div style={row}>
+            <div style={cell}>
+              <div style={lab}>Loan term (years)</div>
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={termYears}
+                onChange={(e) => setTermYears(Number(e.target.value) || 30)}
+                style={inp}
+              />
+            </div>
+            <div style={{ ...cell, flex: "1 1 200px" }}>
+              <div style={lab}>Repayment</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setRepaymentMode("pi")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${repaymentMode === "pi" ? "#e8b84b" : "rgba(255,255,255,0.1)"}`,
+                    background: repaymentMode === "pi" ? "rgba(232,184,75,0.12)" : "#181c24",
+                    color: "#e8e6e0",
+                    fontFamily: "'IBM Plex Mono',monospace",
+                    fontSize: 11,
+                    cursor: "pointer"
+                  }}
+                >
+                  P&amp;I
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRepaymentMode("io")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${repaymentMode === "io" ? "#e8b84b" : "rgba(255,255,255,0.1)"}`,
+                    background: repaymentMode === "io" ? "rgba(232,184,75,0.12)" : "#181c24",
+                    color: "#e8e6e0",
+                    fontFamily: "'IBM Plex Mono',monospace",
+                    fontSize: 11,
+                    cursor: "pointer"
+                  }}
+                >
+                  Interest only
+                </button>
+              </div>
+            </div>
+            <div style={cell}>
+              <div style={lab}>Weekly rent</div>
+              <input
+                type="number"
+                min={0}
+                value={weeklyRent}
+                onChange={(e) => setWeeklyRent(Number(e.target.value) || 0)}
+                style={inp}
+              />
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              paddingTop: 14,
+              borderTop: "1px solid rgba(255,255,255,0.08)",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 10,
+              fontFamily: "'IBM Plex Mono',monospace",
+              fontSize: 12
+            }}
+          >
+            {[
+              ["Loan amount", formatAud(out.loan)],
+              ["Monthly repayment", formatAud(out.monthlyRepayment)],
+              ["Weekly repayment", formatAud(out.weeklyRepayment)],
+              ["Weekly rent", formatAud(weeklyRent)],
+              ["Rent vs weekly repayment", `${formatAudPlain(weeklyRent)} vs ${formatAudPlain(out.weeklyRepayment)}`],
+              [
+                "Monthly cashflow",
+                <span key="mcf" style={{ color: out.monthlyCashflow >= 0 ? "#4ade80" : "#f87171" }}>
+                  {out.monthlyCashflow >= 0 ? "+" : ""}
+                  {formatAud(out.monthlyCashflow)}
+                </span>
+              ],
+              ["Gross yield", `${out.grossYieldPct.toFixed(2)}%`],
+              [
+                "Annual cashflow",
+                <span key="acf" style={{ color: out.annualCashflow >= 0 ? "#4ade80" : "#f87171" }}>
+                  {out.annualCashflow >= 0 ? "+" : ""}
+                  {formatAud(out.annualCashflow)}
+                </span>
+              ]
+            ].map(([k, v], i) => (
+              <div
+                key={i}
+                style={{
+                  background: "#181c24",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  border: "1px solid rgba(255,255,255,0.06)"
+                }}
+              >
+                <div style={{ fontSize: 9, color: "#4b5563", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>{k}</div>
+                <div style={{ color: "#e8e6e0", fontWeight: 600 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, fontSize: 10, color: "#4b5563", lineHeight: 1.5 }}>
+            Indicative only — not financial advice. Confirm repayments with your lender.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── LANDING PAGE ─────────────────────────────────────────────────────────────
@@ -1010,6 +1353,9 @@ export default function App() {
     msgs.at(-1)?.role === "assistant" &&
     String(msgs.at(-1)?.text || "").trim().length > 0;
 
+  const lastAssistantText = String(msgs.at(-1)?.text || "");
+  const showMortgageCalc = showPdfDownload && shouldShowMortgageCalculator(lastAssistantText);
+
   if (screen === "landing") return React.createElement(Landing, { onStart: handleStart });
 
   return React.createElement(React.Fragment, null,
@@ -1119,6 +1465,12 @@ export default function App() {
             }
           }, "⬇ Download PDF Report")
         ),
+
+        showMortgageCalc &&
+          React.createElement(MortgageCalculatorPanel, {
+            key: msgs.length,
+            analysisText: lastAssistantText
+          }),
 
         // Input area
         React.createElement("div", { style:{ borderTop:"1px solid rgba(255,255,255,0.06)", padding:"14px 28px", background:"#0e1117", display:"flex", flexDirection:"column", gap:10 } },
