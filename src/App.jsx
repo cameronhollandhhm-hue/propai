@@ -925,7 +925,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const drawCover = () => {
     paintBg(CREAM);
     setFill(ORANGE);
-    doc.circle(MX + 1.2, 24, 1.8, "F");
+    doc.circle(MX + 1.6, 24, 1.6, "F");
     setText(INK);
     doc.setFont("times", "normal");
     doc.setFontSize(18);
@@ -1003,14 +1003,14 @@ function buildBrandedPdf(analysisText, options = {}) {
     const cellW = gridW / 2;
     setFill(CREAM);
     setStroke(LINE);
-    doc.setLineWidth(0.35);
+    doc.setLineWidth(0.2);
     doc.rect(MX, gridTop, gridW, gridH, "FD");
     doc.line(MX + cellW, gridTop, MX + cellW, gridTop + gridH);
     setText(INK_MUTED);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("DEAL SCORE", MX + 8, 122);
-    doc.text("VERDICT", MX + cellW + 8, 122);
+    doc.text("DEAL SCORE", MX + 8, 122, { charSpace: 0.8 });
+    doc.text("VERDICT", MX + cellW + 8, 122, { charSpace: 0.8 });
     setText(INK);
     doc.setFont("times", "normal");
     doc.setFontSize(30);
