@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { jsPDF } from "jspdf";
 
 // ─── MEGA SYSTEM PROMPT ───────────────────────────────────────────────────────
 const SYSTEM = `You are PropAI — an elite Australian property investment analyst. Search the web for live data before every answer.
@@ -57,6 +58,113 @@ function renderText(text) {
     );
     return React.createElement("div", { key: i, style: { marginBottom: 2 } }, bold);
   });
+}
+
+function stripMarkdownForPdf(text) {
+  return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1");
+}
+
+function extractReportTitle(analysisText) {
+  const plain = stripMarkdownForPdf(analysisText);
+  const lines = plain.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (/🏡/.test(line)) return line.replace(/^🏡\s*/, "").replace(/\s+/g, " ").slice(0, 90) || "Suburb analysis";
+    if (/🏠\s*DEAL\s+ANALYSIS/i.test(line) || /DEAL\s+ANALYSIS/i.test(line)) {
+      return line.replace(/^[🏠\s]+/u, "").replace(/\s+/g, " ").slice(0, 90);
+    }
+    if (/🔥\s*TODAY'?S\s+TOP\s+DEALS/i.test(line) || /^TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
+  }
+  const first = lines[0];
+  if (first && first.length < 100) return first;
+  return "PropAI analysis";
+}
+
+function slugForFilename(title) {
+  const s = title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return s.slice(0, 48) || "Analysis";
+}
+
+function buildBrandedPdf(analysisText) {
+  const cleanBody = stripMarkdownForPdf(analysisText).replace(/\r/g, "");
+  const title = extractReportTitle(analysisText);
+  const dateStr = new Date().toLocaleDateString("en-AU", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+  const fileDate = new Date().toISOString().slice(0, 10);
+
+  const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 18;
+  const contentW = pageW - margin * 2;
+  const bottomSafe = 22;
+  let y = margin;
+
+  doc.setFillColor(14, 17, 23);
+  doc.rect(0, 0, pageW, 36, "F");
+  doc.setFillColor(232, 184, 75);
+  doc.roundedRect(margin, 9, 9, 9, 1.5, 1.5, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(0, 0, 0);
+  doc.text("P", margin + 4.5, 15.5, { align: "center" });
+  doc.setFontSize(18);
+  doc.setTextColor(232, 184, 75);
+  doc.text("PropAI", margin + 12, 16);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(200, 200, 208);
+  doc.text("Australian property intelligence", margin + 12, 22);
+
+  y = 44;
+  doc.setTextColor(28, 28, 32);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  const titleLines = doc.splitTextToSize(title, contentW);
+  doc.text(titleLines, margin, y);
+  y += titleLines.length * 7 + 2;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 110);
+  doc.text(`Generated ${dateStr}`, margin, y);
+  y += 9;
+
+  doc.setDrawColor(210, 210, 218);
+  doc.line(margin, y, pageW - margin, y);
+  y += 7;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(35, 35, 42);
+  const bodyLines = doc.splitTextToSize(cleanBody, contentW);
+  const lineH = 5.1;
+  for (let i = 0; i < bodyLines.length; i++) {
+    if (y > pageH - bottomSafe) {
+      doc.addPage();
+      y = margin;
+      doc.setTextColor(35, 35, 42);
+    }
+    doc.text(bodyLines[i], margin, y);
+    y += lineH;
+  }
+
+  y += 6;
+  if (y > pageH - bottomSafe) {
+    doc.addPage();
+    y = margin;
+  }
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 130);
+  const foot = "PropAI — Not financial advice. Consult a licensed adviser, mortgage broker, and conveyancer.";
+  const footLines = doc.splitTextToSize(foot, contentW);
+  doc.text(footLines, margin, y);
+
+  const fname = `PropAI-Report-${slugForFilename(title)}-${fileDate}.pdf`;
+  doc.save(fname);
 }
 
 const FREE_LIMIT = 3;
@@ -655,6 +763,20 @@ export default function App() {
   const remaining = FREE_LIMIT - usageCount;
   const showPaywall = !isPro && usageCount >= FREE_LIMIT;
 
+  function handleDownloadPdf() {
+    const last = msgs.at(-1);
+    if (last?.role !== "assistant") return;
+    const t = String(last.text || "").trim();
+    if (!t) return;
+    buildBrandedPdf(t);
+  }
+
+  const showPdfDownload =
+    !busy &&
+    msgs.some((m) => m.role === "user") &&
+    msgs.at(-1)?.role === "assistant" &&
+    String(msgs.at(-1)?.text || "").trim().length > 0;
+
   if (screen === "landing") return React.createElement(Landing, { onStart: handleStart });
 
   return React.createElement(React.Fragment, null,
@@ -741,6 +863,28 @@ export default function App() {
           ),
           showPaywall && React.createElement(Paywall, { used:usageCount, onUpgrade:handleUpgrade }),
           React.createElement("div", { ref:bottomRef })
+        ),
+
+        showPdfDownload && React.createElement("div", { style:{ padding:"0 28px 12px", flexShrink:0 } },
+          React.createElement("button", {
+            type:"button",
+            onClick: handleDownloadPdf,
+            style:{
+              display:"inline-flex",
+              alignItems:"center",
+              gap:8,
+              padding:"10px 16px",
+              borderRadius:10,
+              border:"1px solid rgba(232,184,75,0.35)",
+              background:"rgba(232,184,75,0.08)",
+              color:"#e8b84b",
+              fontFamily:"'IBM Plex Mono',monospace",
+              fontSize:12,
+              fontWeight:600,
+              cursor:"pointer",
+              transition:"background 0.15s"
+            }
+          }, "⬇ Download PDF Report")
         ),
 
         // Input area
