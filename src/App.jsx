@@ -1457,6 +1457,8 @@ function shouldCountFreeSuccessfulAnalysis(text, hadNdjsonError) {
     "no response stream",
     "connection interrupted",
     "busy right now",
+    "experiencing heavy load",
+    "free analysis has not been used",
     "try again in",
     "analysis took too long",
     "too long",

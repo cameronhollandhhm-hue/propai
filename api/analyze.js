@@ -69,6 +69,32 @@ function cleanCompareSuburb(s) {
     .trim();
 }
 
+const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 503, 529]);
+const ANTHROPIC_RETRY_DELAYS_MS = [2000, 4000, 8000];
+const ANTHROPIC_OVERLOAD_MESSAGE =
+  "The AI service is experiencing heavy load right now. Please wait 30 seconds and try again. Your free analysis has not been used.";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Main streaming messages call: retry on 429/503/529 with 2s / 4s / 8s backoff (3 retries = 4 attempts). */
+async function callAnthropicWithRetry(url, init) {
+  const maxAttempts = 4;
+  let lastRes = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fetch(url, init);
+    lastRes = res;
+    if (res.ok && res.body) return res;
+    const status = res.status;
+    const retryable = RETRYABLE_ANTHROPIC_STATUS.has(status);
+    if (!retryable || attempt === maxAttempts - 1) return res;
+    const delay = ANTHROPIC_RETRY_DELAYS_MS[attempt] ?? 8000;
+    await sleep(delay);
+  }
+  return lastRes;
+}
+
 async function fetchSuburbResearch(apiKey, suburb, state) {
   const body = {
     model: "claude-sonnet-4-5",
@@ -85,7 +111,7 @@ async function fetchSuburbResearch(apiKey, suburb, state) {
     tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
   };
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const r = await callAnthropicWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -149,6 +175,17 @@ Structure and mandatory sections:
 3) Compare mode: When the user asks to compare two suburbs (e.g. "Compare [suburb A] vs [suburb B] [STATE]" or same state implied), respond with a side-by-side comparison including for BOTH suburbs: rental yield context, growth potential, vacancy, indicative entry / median price band, and a one-line verdict (BUY / NEGOTIATE / SKIP) each. Then add a short "Which wins for [criteria]?" summary and a combined VERDICT block if helpful. Use web search when enabled to ground numbers.
 
 4) Owned property — value & performance: If the user says they own a property and asks about its current value, worth, or performance (e.g. capital growth, how it is tracking), do not estimate, guess, or invent a current market value. Do not present hypothetical or modelled dollar figures as fact. Instead, briefly ask them to provide: (a) their current valuation source (e.g. bank, professional valuation, recent desktop), (b) current rental income, and (c) any recent comparable sales they are using. Only after they supply this (or clearly waive specific items) may you give tailored analysis — and you must still distinguish facts they supplied from general market commentary. If they have not provided enough to ground numbers, keep the reply to requirements and framework, not fabricated values.
+
+WRITING QUALITY (mandatory for every reply):
+- Use Australian English spelling: neighbour, analyse, favour, realise (not US variants).
+- Australian dollars: use $580K or $580,000 in prose and headings — never lowercase "580k" in headings.
+- Proofread before emitting: no typos, no doubled words, no missing words.
+- Every bullet point must be a complete sentence ending with a full stop.
+- Use an em dash with spaces on both sides — like this — not a tight em-dash glued to words.
+- In prose, spell out numbers under ten; use digits in tables, metrics, and structured marker lines.
+- Capitalise proper nouns consistently (e.g. Defence, James Cook University, Lavarack Barracks).
+- No marketing fluff: avoid words and phrases such as "absolutely", "truly", "very", "really", "literally", "game-changer", "next-level", "unlock", and "leverage" except when meaning financial leverage.
+- First mention of a suburb in prose: "Kirwan (QLD 4817)" (suburb with state and postcode where known). Subsequent mentions: "Kirwan" only.
 
 STRUCTURED OUTPUT CONTRACT (MANDATORY — the PDF parser depends on these exact formats):
 
@@ -308,7 +345,7 @@ export default async function handler(req, res) {
       }];
     }
 
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+    const anthropicRes = await callAnthropicWithRetry("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -318,21 +355,17 @@ export default async function handler(req, res) {
       body: JSON.stringify(body)
     });
 
-    if (anthropicRes.status === 429) {
-      beginNdjson(res);
-      sendNdjsonLine(res, {
-        error: "rate_limit",
-        message: "⚠️ Busy right now — please try again in a minute."
-      });
-      return res.end();
-    }
-
     if (!anthropicRes.ok || !anthropicRes.body) {
       beginNdjson(res);
-      sendNdjsonLine(res, {
-        error: "upstream",
-        message: "⚠️ Something went wrong. Try rephrasing with suburb + state + price + rent."
-      });
+      const st = anthropicRes.status;
+      if (RETRYABLE_ANTHROPIC_STATUS.has(st)) {
+        sendNdjsonLine(res, { error: "overload", message: ANTHROPIC_OVERLOAD_MESSAGE });
+      } else {
+        sendNdjsonLine(res, {
+          error: "upstream",
+          message: "⚠️ Something went wrong. Try rephrasing with suburb + state + price + rent."
+        });
+      }
       return res.end();
     }
 
