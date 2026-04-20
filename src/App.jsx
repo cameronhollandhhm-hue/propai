@@ -324,6 +324,7 @@ function CompareSuburbCards({ data, stateLabel }) {
 function renderAssistantContent(m) {
   const parsed = parsePropaiCompareBlock(m.text);
   const showCompare = !!parsed?.data;
+  const chatSource = parsed?.prose ?? m.text;
   return React.createElement(
     React.Fragment,
     null,
@@ -332,7 +333,7 @@ function renderAssistantContent(m) {
         data: parsed.data,
         stateLabel: m.compareMeta?.state
       }),
-    renderChatContent(parsed?.prose ?? m.text)
+    renderChatContent(cleanForDisplay(chatSource))
   );
 }
 
@@ -746,8 +747,100 @@ function stripPdfThinkingPreamble(text) {
   return lines.slice(i).join("\n");
 }
 
+function parsePropaiScore(text) {
+  if (!text) return null;
+  const m = text.match(/\[\[PROPAI_SCORE\]\]\s*(\d+)\s*\/\s*100/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function extractSection(text, tag) {
+  if (!text) return "";
+  const re = new RegExp(`\\[\\[${tag}_START\\]\\]([\\s\\S]*?)\\[\\[${tag}_END\\]\\]`);
+  const m = text.match(re);
+  return m ? m[1].trim() : "";
+}
+
+function extractSuburbName(analysisText, userPrompt) {
+  const headingMatch = analysisText?.match(
+    /##?\s*([A-Za-z][A-Za-z\s]+?),?\s*(QLD|NSW|VIC|WA|SA|TAS|ACT|NT)\s*\d{4}/
+  );
+  if (headingMatch) {
+    const n = headingMatch[1].trim();
+    if (!/^report$/i.test(n)) return n;
+  }
+
+  const compareMatch = analysisText?.match(/\[\[PROPAI_COMPARE\]\]([\s\S]*?)(?=\[\[|$)/);
+  if (compareMatch) {
+    try {
+      const json = JSON.parse(compareMatch[1].trim());
+      if (json.suburb1?.name && !/^report$/i.test(String(json.suburb1.name).trim())) {
+        return String(json.suburb1.name).trim();
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  const promptMatch = userPrompt?.match(/\b([A-Z][a-z]+)\s+(QLD|NSW|VIC|WA|SA|TAS|ACT|NT)\b/);
+  if (promptMatch && !/^report$/i.test(promptMatch[1])) return promptMatch[1];
+
+  return "Property";
+}
+
+function cleanForDisplay(text) {
+  if (!text) return "";
+  return text
+    .replace(/\[\[PROPAI_SCORE\]\]\s*\d+\s*\/\s*100/gi, "")
+    .replace(/\[\[PROPAI_WALKAWAY\]\][^\n]*/gi, "")
+    .replace(/\[\[PROPAI_VERDICT\]\][^\n]*/gi, "")
+    .replace(/\[\[(BULL|BEAR|CASHFLOW)_(START|END)\]\]/gi, "")
+    .replace(/\[\[PROPAI_COMPARE\]\][\s\S]*?(?=\n\n|$)/gi, "")
+    .trim();
+}
+
+function parseMarkerBullItems(bullBody) {
+  const items = [];
+  for (const line of String(bullBody || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
+    const m = line.match(/^(\d+)\.\s+(.+)$/);
+    if (!m) continue;
+    const raw = stripMarkdownSymbols(m[2]).replace(/\*\*/g, "").trim();
+    if (!raw) continue;
+    items.push({
+      title: raw.slice(0, 56),
+      body: raw.length > 56 ? raw.slice(56, 356) : ""
+    });
+  }
+  return items;
+}
+
+function parseMarkerBearItems(bearBody) {
+  const items = [];
+  for (const line of String(bearBody || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
+    const raw = stripMarkdownSymbols(line).replace(/\*\*/g, "").trim();
+    const idx = raw.indexOf(":");
+    if (idx > 0) {
+      items.push({
+        title: raw.slice(0, idx).trim().slice(0, 80),
+        body: raw.slice(idx + 1).trim().substring(0, 280)
+      });
+    } else if (raw.length > 5) {
+      items.push({ title: raw.slice(0, 45), body: raw.substring(0, 280) });
+    }
+  }
+  return items;
+}
+
 function buildBrandedPdf(analysisText, options = {}) {
   const compareMeta = options.compareMeta;
+  const bullBody = extractSection(analysisText, "BULL");
+  const bearBody = extractSection(analysisText, "BEAR");
+  const cashflowBody = extractSection(analysisText, "CASHFLOW");
   const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
 
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
@@ -844,20 +937,18 @@ function buildBrandedPdf(analysisText, options = {}) {
     }
   };
 
-  let suburbName =
-    (src.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*,?\s*(?:QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "Report";
+  let suburbName = extractSuburbName(analysisText, options.userPrompt || "");
+  if (/^report$/i.test(String(suburbName || "").trim())) suburbName = "Property";
   let stateCode = (src.match(/\b(QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "QLD";
   const postcode = (src.match(/\b(\d{4})\b/)?.[1]) || "";
   if (compareMeta) {
-    suburbName = `${compareMeta.suburbA} vs ${compareMeta.suburbB}`;
+    suburbName = `${compareMeta.suburb1} vs ${compareMeta.suburb2}`;
     stateCode = compareMeta.state;
   }
-  const scoreMatch = src.match(
-    /(?:Investment Score|PropAI Score|PropAI Investment Score|Deal Score)[:\s]+(\d+(?:\.\d+)?)\s*\/\s*(\d+)/i
-  );
-  const score = scoreMatch ? scoreMatch[1] : "-";
-  const scoreMax = scoreMatch ? scoreMatch[2] : "100";
-  const scorePct = scoreMatch ? Math.min(1, parseFloat(score) / parseFloat(scoreMax)) : 0.75;
+  const parsedScore = parsePropaiScore(analysisText);
+  const score = parsedScore != null ? parsedScore : "-";
+  const scoreMax = "100";
+  const scorePct = parsedScore != null ? Math.min(1, parsedScore / 100) : 0.75;
   const verdictMatch = src.match(/\b(?:VERDICT[:\s]+)?(BUY|NEGOTIATE|SKIP)\b/i);
   const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : "NEGOTIATE";
   const walkAwayMatch = src.match(/\$(\d+)[Kk]?\s*[-–—]\s*\$(\d+)[Kk]?/);
@@ -866,7 +957,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
   const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
   const verdictColor = verdict === "BUY" ? FOREST : verdict === "SKIP" ? CRIMSON : AMBER;
-  const refBase = compareMeta ? String(compareMeta.suburbA || "SUB") : suburbName;
+  const refBase = compareMeta ? String(compareMeta.suburb1 || "SUB") : suburbName;
   const refPrefix = refBase.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
 
   const execParas = src
@@ -895,35 +986,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     metrics.push(placeholders[metrics.length]);
   }
 
-  const workingSection = src.match(
-    /(?:WHAT'S WORKING|What's Working)[:\s]*([\s\S]*?)(?:RED FLAGS|Red Flags|INVESTOR EDGE|Investor Edge)/i
-  );
-  const workingText = workingSection ? workingSection[1] : src;
-  const workingItems = [];
-  const numRe =
-    /(?:^|\n)\s*(\d+)\.\s+\*?\*?([^\n*]+?)\*?\*?\s*\n([\s\S]*?)(?=\n\s*\d+\.|\n\n[A-Z]|$)/g;
-  let wm;
-  while ((wm = numRe.exec(workingText)) !== null && workingItems.length < 5) {
-    workingItems.push({
-      title: clean(wm[2]).replace(/\*\*/g, ""),
-      body: clean(wm[3]).substring(0, 300)
-    });
-  }
-
-  const flagsSection = src.match(
-    /(?:RED FLAGS|Red Flags)[:\s]*([\s\S]*?)(?:INVESTOR EDGE|Investor Edge|WALK-AWAY|Walk-Away|FINAL CALL|Final Call|$)/i
-  );
-  const flagsText = flagsSection ? flagsSection[1] : "";
-  const flagItems = [];
-  const flagRe =
-    /(?:^|\n)[\s\-•*▸]*\*?\*?([A-Z][^:*\n]{5,80}):\*?\*?\s*([^\n]+(?:\n(?!\s*[-•*▸]|\s*\n|\s*\*\*|\s*[A-Z][a-z]+:)[^\n]+)*)/g;
-  let fm;
-  while ((fm = flagRe.exec(flagsText)) !== null && flagItems.length < 4) {
-    flagItems.push({
-      title: clean(fm[1]).replace(/\*\*/g, ""),
-      body: clean(fm[2]).substring(0, 280)
-    });
-  }
+  const workingItems = parseMarkerBullItems(bullBody);
+  const flagItems = parseMarkerBearItems(bearBody);
 
   const finalCallMatch = src.match(/(?:FINAL CALL|Final Call)[^\n:]*[:\s]+([^\n]+)/i);
   const finalCallText = finalCallMatch
@@ -949,7 +1013,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.text(`REF · ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
     drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
     const titleStr = compareMeta
-      ? `${compareMeta.suburbA} vs ${compareMeta.suburbB},`
+      ? `${compareMeta.suburb1} vs ${compareMeta.suburb2},`
       : `${suburbName},`;
     const titleAvailW = PW - 2 * MX;
     let fittedSize = 72;
@@ -990,6 +1054,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK);
     doc.setFont("times", "normal");
     doc.setFontSize(16);
+    console.log("[PDF] Score parsed:", score);
     doc.text(`${score} / ${scoreMax}`, MX, PH - 28);
     doc.text(walkAway, PW - MX, PH - 28, { align: "right" });
     const pillW = 60;
@@ -1067,6 +1132,23 @@ function buildBrandedPdf(analysisText, options = {}) {
         doc.text(line, MX, ly);
         ly += 5.4;
       });
+    }
+    if (cashflowBody) {
+      ly += 6;
+      setText(FOREST);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.text("CASHFLOW SNAPSHOT", MX, ly, { charSpace: 0.6 });
+      ly += 5;
+      setText(INK_SOFT);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      const cfLines = doc.splitTextToSize(clean(stripMarkdownSymbols(cashflowBody)), PW - 2 * MX);
+      for (let ci = 0; ci < cfLines.length; ci++) {
+        if (ly > PH - 28) break;
+        doc.text(cfLines[ci], MX, ly);
+        ly += 4.6;
+      }
     }
     drawPageFoot("ii");
   };
@@ -1279,8 +1361,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     const s1 = data?.suburb1;
     const s2 = data?.suburb2;
     const win = normalizeCompareWinner(data || {});
-    const n1 = clean(String(s1?.name || compareMeta?.suburbA || "Suburb A"));
-    const n2 = clean(String(s2?.name || compareMeta?.suburbB || "Suburb B"));
+    const n1 = clean(String(s1?.name || compareMeta?.suburb1 || "Suburb A"));
+    const n2 = clean(String(s2?.name || compareMeta?.suburb2 || "Suburb B"));
     setText(INK);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
@@ -1354,7 +1436,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     drawCompareHeadToHead();
   }
 
-  const safeSub = clean(suburbName).replace(/\s+/g, "-") || "Report";
+  const safeSub = clean(suburbName).replace(/\s+/g, "-") || "Property";
   const fileName = `PropAI-Report-${safeSub}-${stateCode}-${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(fileName);
 }
@@ -2356,7 +2438,14 @@ export default function App() {
     if (last?.role !== "assistant") return;
     const t = String(last.text || "").trim();
     if (!t) return;
-    buildBrandedPdf(t, { compareMeta: last.compareMeta });
+    let userPrompt = "";
+    for (let i = msgs.length - 2; i >= 0; i--) {
+      if (msgs[i].role === "user") {
+        userPrompt = String(msgs[i].text || "");
+        break;
+      }
+    }
+    buildBrandedPdf(t, { compareMeta: last.compareMeta, userPrompt });
   }
 
   const showPdfDownload =
