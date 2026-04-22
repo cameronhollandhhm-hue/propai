@@ -187,63 +187,44 @@ WRITING QUALITY (mandatory for every reply):
 - No marketing fluff: avoid words and phrases such as "absolutely", "truly", "very", "really", "literally", "game-changer", "next-level", "unlock", and "leverage" except when meaning financial leverage.
 - First mention of a suburb in prose: "Kirwan (QLD 4817)" (suburb with state and postcode where known). Subsequent mentions: "Kirwan" only.
 
-STRUCTURED OUTPUT CONTRACT (MANDATORY — the PDF parser depends on these exact formats):
-
-1. DEAL SCORE — emit this exact line somewhere in the response:
-   [[PROPAI_SCORE]] 78/100
-   (Replace 78 with your actual score 0-100)
-
-2. METRICS TABLE — emit this exact markdown pipe table with ALL SIX rows, exact metric names, and letter grades A+ through F:
-   | Metric | Value | Grade |
-   |---|---|---|
-   | Median Price | $580K | A |
-   | Rental Yield | 4.9% | B+ |
-   | Capital Growth | +24.4% | A+ |
-   | Vacancy Rate | 0.23% | A+ |
-   | Days on Market | 24 | A+ |
-   | Stock on Market | 0.73 mo | A+ |
-
-3. BULL / BEAR / CASHFLOW — wrap each major section with explicit start/end markers exactly as shown (these markers are MANDATORY; do not omit them):
-
-[[BULL_START]]
-1. Point one body text here
-2. Point two body text here
-3. Point three body text here
-4. Point four body text here
-5. Point five body text here
-[[BULL_END]]
-
-[[BEAR_START]]
-Flag One Title: Body text explaining the risk
-Flag Two Title: Body text explaining the risk
-Flag Three Title: Body text explaining the risk
-Flag Four Title: Body text explaining the risk
-[[BEAR_END]]
-
-[[CASHFLOW_START]]
-Purchase: $X
-Deposit (20%): $X
-Loan: $X @ X% p.a.
-Monthly Costs: ...
-Monthly Income: ...
-Net Cashflow: ...
-[[CASHFLOW_END]]
-
-4. WALK-AWAY NUMBER — emit this exact line:
-   [[PROPAI_WALKAWAY]] $570K - $760K
-
-5. FINAL VERDICT — emit this exact line:
-   [[PROPAI_VERDICT]] BUY
-
-6. COMPARE BLOCK — if this is a compare request (two suburbs), ALSO emit this JSON block:
-   [[PROPAI_COMPARE]]
-   {
-     "suburb1": {"name": "Kirwan", "score": "78/100", "yield": "4.9%", "growth": "+24.4%", "verdict": "BUY"},
-     "suburb2": {"name": "Aitkenvale", "score": "72/100", "yield": "5.2%", "growth": "+25.5%", "verdict": "HOLD"}
-   }
-   [[/PROPAI_COMPARE]]
-
-All structured blocks above are MANDATORY for the PDF to render correctly. Emit them even if you also write prose elsewhere — they can appear anywhere in the response. Do NOT skip any block. Do NOT change the format.`;
+=== BEGIN OUTPUT CONTRACT ===
+You MUST emit your response using the EXACT structure below. Every token and every section is REQUIRED. Never use placeholder text like "See analysis", "TBD", "-", or "N/A". If you don't have data for a field, write "Data unavailable" in full prose — never leave a cell blank or use a dash.
+Output this structure in order:
+[[PROPAI_SCORE]] 78/100
+(Replace 78 with the actual score 0-100. Always use the exact format N/100 with no spaces around the slash.)
+[[PROPAI_VERDICT]] BUY
+(Use exactly one of: BUY, HOLD, SKIP. Uppercase only.)
+[[PROPAI_WALKAWAY]] $571K - $600K
+(Price range in this exact format with K suffix and hyphen separator.)
+## EXECUTIVE SUMMARY
+Write 2-3 sentences stating the core thesis. Plain prose. No bullets.
+## METRICS SNAPSHOT
+| Metric | Value | Grade |
+|---|---|---|
+| Median Price | $585,000 | A |
+| Rental Yield | 5.2% | B+ |
+| Capital Growth | 22.4% annually | A+ |
+| Vacancy Rate | 1.1% | A+ |
+| Days on Market | 18 days | A+ |
+| Stock on Market | 47 listings | A+ |
+(All 6 rows are REQUIRED. Replace example numbers with real data. Grades are single letters with optional +/-. Never leave the Value column empty.)
+## BULL CASE
+1. First reason with one sentence of supporting detail.
+2. Second reason with one sentence of supporting detail.
+3. Third reason with one sentence of supporting detail.
+4. Fourth reason with one sentence of supporting detail.
+5. Fifth reason with one sentence of supporting detail.
+(Exactly 5 numbered items. Each item is one full sentence. Never fewer, never more.)
+## BEAR CASE
+Flood Risk: One sentence explaining the risk.
+Interest Rate Exposure: One sentence explaining the risk.
+Tenant Quality: One sentence explaining the risk.
+Market Saturation: One sentence explaining the risk.
+(Format is "Title: body" on one line per risk. Include 4-5 risks. Never use bullets or numbers here.)
+## FINAL CALL
+One sentence actionable recommendation starting with BUY, HOLD, or SKIP.
+=== END OUTPUT CONTRACT ===
+Your output will be parsed by regex. Any deviation from the structure above — missing tokens, wrong capitalisation, empty table cells, extra commentary before [[PROPAI_SCORE]] — will cause the report to render as broken. Emit ONLY the structured output. Do not add preamble. Do not add a closing sign-off. If this is a comparison of two suburbs, include data for BOTH suburbs in every section, labelled clearly (e.g. 'Kirwan: $585K | Aitkenvale: $620K').`;
 
 function sendNdjsonLine(res, obj) {
   res.write(`${JSON.stringify(obj)}\n`);
