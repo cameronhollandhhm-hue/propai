@@ -224,6 +224,13 @@ Market Saturation: One sentence explaining the risk.
 ## FINAL CALL
 One sentence actionable recommendation starting with BUY, HOLD, or SKIP.
 === END OUTPUT CONTRACT ===
+For compare reports (two suburbs), after all other output you MUST emit exactly this block:
+[[PROPAI_COMPARE]]
+{
+  "suburb1": { "name": "<first suburb>", "score": <number>, "yield": "<percent>", "growth": "<percent>", "verdict": "BUY|HOLD|SKIP" },
+  "suburb2": { "name": "<second suburb>", "score": <number>, "yield": "<percent>", "growth": "<percent>", "verdict": "BUY|HOLD|SKIP" }
+}
+This is REQUIRED for compare reports. Emit nothing else after this block.
 Your output will be parsed by regex. Any deviation from the structure above — missing tokens, wrong capitalisation, empty table cells, extra commentary before [[PROPAI_SCORE]] — will cause the report to render as broken. Emit ONLY the structured output. Do not add preamble. Do not add a closing sign-off. If this is a comparison of two suburbs, include data for BOTH suburbs in every section, labelled clearly (e.g. 'Kirwan: $585K | Aitkenvale: $620K').`;
 
 function sendNdjsonLine(res, obj) {
