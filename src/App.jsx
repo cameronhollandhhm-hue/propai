@@ -312,7 +312,7 @@ function CompareSuburbCards({ data, stateLabel }) {
           }}
         >
           <div style={{ fontWeight: 800, fontSize: 11, color: brandGreen, marginBottom: 6, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Winner — {win.name || "See analysis"}
+            Winner — {win.name || "Data unavailable"}
           </div>
           <div>{win.reason || ""}</div>
         </div>
@@ -749,8 +749,86 @@ function stripPdfThinkingPreamble(text) {
 
 function parsePropaiScore(text) {
   if (!text) return null;
-  const m = text.match(/\[\[PROPAI_SCORE\]\]\s*(\d+)\s*\/\s*100/i);
-  return m ? parseInt(m[1], 10) : null;
+  const m = text.match(/\[\[PROPAI_SCORE\]\]\s*(\d{1,3})\s*\/\s*100/i);
+  if (m) return parseInt(m[1], 10);
+  const fallback = text.match(/score[^\d]{0,20}(\d{1,3})\s*\/\s*100/i);
+  return fallback ? parseInt(fallback[1], 10) : null;
+}
+
+function parsePropaiVerdict(text) {
+  if (!text) return null;
+  const m = text.match(/\[\[PROPAI_VERDICT\]\]\s*(BUY|HOLD|SKIP)/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function parsePropaiWalkaway(text) {
+  if (!text) return null;
+  const m = text.match(/\[\[PROPAI_WALKAWAY\]\]\s*(\$[\d.,]+K?\s*-\s*\$[\d.,]+K?)/i);
+  return m ? m[1].trim() : null;
+}
+
+function parsePropaiMetrics(text) {
+  if (!text) return [];
+  const section = text.match(/##\s*METRICS SNAPSHOT\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
+  if (!section) {
+    console.warn("[parsePropaiMetrics] METRICS SNAPSHOT section not found");
+    return [];
+  }
+  const lines = section[1].split("\n").map((l) => l.trim()).filter(Boolean);
+  const rows = [];
+  for (const line of lines) {
+    if (/^\|?\s*-+\s*\|/.test(line)) continue;
+    if (/\|\s*Metric\s*\|/i.test(line)) continue;
+    const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+    if (cells.length >= 3) {
+      rows.push({ metric: cells[0], value: cells[1], grade: cells[2] });
+    }
+  }
+  if (rows.length === 0) {
+    console.warn("[parsePropaiMetrics] No metric rows parsed from section:", section[1]);
+  }
+  return rows;
+}
+
+function parsePropaiBullCase(text) {
+  if (!text) return [];
+  const section = text.match(/##\s*BULL CASE\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
+  if (!section) {
+    console.warn("[parsePropaiBullCase] BULL CASE section not found");
+    return [];
+  }
+  const items = [];
+  const lines = section[1].split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^(\d+)[.)]\s+(.+)$/);
+    if (m) items.push(m[2].trim());
+    else if (/^[-*•]\s+/.test(line)) items.push(line.replace(/^[-*•]\s+/, "").trim());
+  }
+  if (items.length === 0) {
+    console.warn("[parsePropaiBullCase] No items parsed from section:", section[1]);
+  }
+  return items;
+}
+
+function parsePropaiBearCase(text) {
+  if (!text) return [];
+  const section = text.match(/##\s*BEAR CASE\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
+  if (!section) {
+    console.warn("[parsePropaiBearCase] BEAR CASE section not found");
+    return [];
+  }
+  const items = [];
+  const lines = section[1].split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^\*{0,2}([^:*]+?)\*{0,2}\s*[:—]\s*(.+)$/);
+    if (m) {
+      items.push({ title: m[1].trim(), body: m[2].trim() });
+    }
+  }
+  if (items.length === 0) {
+    console.warn("[parsePropaiBearCase] No items parsed from section:", section[1]);
+  }
+  return items;
 }
 
 function extractSection(text, tag) {
@@ -798,48 +876,8 @@ function cleanForDisplay(text) {
     .trim();
 }
 
-function parseMarkerBullItems(bullBody) {
-  const items = [];
-  for (const line of String(bullBody || "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const m = line.match(/^(\d+)\.\s+(.+)$/);
-    if (!m) continue;
-    const raw = stripMarkdownSymbols(m[2]).replace(/\*\*/g, "").trim();
-    if (!raw) continue;
-    items.push({
-      title: raw.slice(0, 56),
-      body: raw.length > 56 ? raw.slice(56, 356) : ""
-    });
-  }
-  return items;
-}
-
-function parseMarkerBearItems(bearBody) {
-  const items = [];
-  for (const line of String(bearBody || "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const raw = stripMarkdownSymbols(line).replace(/\*\*/g, "").trim();
-    const idx = raw.indexOf(":");
-    if (idx > 0) {
-      items.push({
-        title: raw.slice(0, idx).trim().slice(0, 80),
-        body: raw.slice(idx + 1).trim().substring(0, 280)
-      });
-    } else if (raw.length > 5) {
-      items.push({ title: raw.slice(0, 45), body: raw.substring(0, 280) });
-    }
-  }
-  return items;
-}
-
 function buildBrandedPdf(analysisText, options = {}) {
   const compareMeta = options.compareMeta;
-  const bullBody = extractSection(analysisText, "BULL");
-  const bearBody = extractSection(analysisText, "BEAR");
   const cashflowBody = extractSection(analysisText, "CASHFLOW");
   const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
 
@@ -946,17 +984,24 @@ function buildBrandedPdf(analysisText, options = {}) {
     stateCode = compareMeta.state;
   }
   const parsedScore = parsePropaiScore(analysisText);
-  const score = parsedScore != null ? parsedScore : "-";
+  const score = parsedScore != null ? parsedScore : null;
+  const scoreLabel = parsedScore != null ? String(parsedScore) : "Data unavailable";
   const scoreMax = "100";
-  const scorePct = parsedScore != null ? Math.min(1, parsedScore / 100) : 0.75;
-  const verdictMatch = src.match(/\b(?:VERDICT[:\s]+)?(BUY|NEGOTIATE|SKIP)\b/i);
-  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : "NEGOTIATE";
-  const walkAwayMatch = src.match(/\$(\d+)[Kk]?\s*[-–—]\s*\$(\d+)[Kk]?/);
-  const walkAway = walkAwayMatch ? `$${walkAwayMatch[1]}K - $${walkAwayMatch[2]}K` : "See Analysis";
+  const scorePct = parsedScore != null ? Math.min(1, parsedScore / 100) : 0;
+  const parsedVerdict = parsePropaiVerdict(analysisText);
+  const verdict = parsedVerdict || "Data unavailable";
+  const walkAway = parsePropaiWalkaway(analysisText) || "Data unavailable";
   const thesisMatch = src.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
   const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
   const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
-  const verdictColor = verdict === "BUY" ? FOREST : verdict === "SKIP" ? CRIMSON : AMBER;
+  const verdictColor =
+    verdict === "BUY"
+      ? FOREST
+      : verdict === "SKIP"
+        ? CRIMSON
+        : verdict === "HOLD"
+          ? AMBER
+          : INK_MUTED;
   const refBase = compareMeta ? String(compareMeta.suburb1 || "SUB") : suburbName;
   const refPrefix = refBase.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
 
@@ -968,31 +1013,42 @@ function buildBrandedPdf(analysisText, options = {}) {
   const execP1 = execParas[0] || thesis;
   const execP2 = execParas[1] || "";
 
-  const metricRegex = /\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([A-F][+\-]?)\s*\|/g;
-  const metrics = [];
-  let mm;
-  while ((mm = metricRegex.exec(src)) !== null && metrics.length < 6) {
-    metrics.push({ label: clean(mm[1]), value: clean(mm[2]), grade: clean(mm[3]) });
-  }
-  const placeholders = [
-    { label: "Median Price", value: "See analysis", grade: "A" },
-    { label: "Rental Yield", value: "See analysis", grade: "B+" },
-    { label: "Capital Growth", value: "See analysis", grade: "A+" },
-    { label: "Vacancy Rate", value: "See analysis", grade: "A+" },
-    { label: "Days on Market", value: "See analysis", grade: "A+" },
-    { label: "Stock on Market", value: "See analysis", grade: "A+" }
+  const requiredMetricNames = [
+    "Median Price",
+    "Rental Yield",
+    "Capital Growth",
+    "Vacancy Rate",
+    "Days on Market",
+    "Stock on Market"
   ];
+  const parsedMetrics = parsePropaiMetrics(analysisText);
+  const metrics = parsedMetrics.slice(0, 6).map((row) => ({
+    label: clean(row.metric || "Data unavailable"),
+    value: clean(row.value || "Data unavailable") || "Data unavailable",
+    grade: clean(row.grade || "Data unavailable") || "Data unavailable"
+  }));
   while (metrics.length < 6) {
-    metrics.push(placeholders[metrics.length]);
+    const label = requiredMetricNames[metrics.length] || "Data unavailable";
+    metrics.push({ label, value: "Data unavailable", grade: "Data unavailable" });
   }
 
-  const workingItems = parseMarkerBullItems(bullBody);
-  const flagItems = parseMarkerBearItems(bearBody);
+  const workingItems = parsePropaiBullCase(analysisText);
+  const flagItems = parsePropaiBearCase(analysisText);
 
-  const finalCallMatch = src.match(/(?:FINAL CALL|Final Call)[^\n:]*[:\s]+([^\n]+)/i);
-  const finalCallText = finalCallMatch
-    ? clean(finalCallMatch[1])
-    : `${verdict} if you can negotiate below Walk-Away and secure target yield.`;
+  const finalCallSection = src.match(/##\s*FINAL CALL\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
+  const finalCallText = (() => {
+    if (finalCallSection?.[1]) {
+      const firstLine = finalCallSection[1]
+        .split("\n")
+        .map((l) => clean(l))
+        .find(Boolean);
+      if (firstLine) return firstLine;
+    }
+    if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP") {
+      return `${verdict} — data-backed recommendation based on current parsed metrics and risk profile.`;
+    }
+    return "Data unavailable";
+  })();
 
   const compareBlockParsed = parsePropaiCompareBlock(analysisText);
 
@@ -1055,7 +1111,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     doc.setFont("times", "normal");
     doc.setFontSize(16);
     console.log("[PDF] Score parsed:", score);
-    doc.text(`${score} / ${scoreMax}`, MX, PH - 28);
+    doc.text(score != null ? `${scoreLabel} / ${scoreMax}` : scoreLabel, MX, PH - 28);
     doc.text(walkAway, PW - MX, PH - 28, { align: "right" });
     const pillW = 60;
     const pillH = 11;
@@ -1099,11 +1155,11 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK);
     doc.setFont("times", "normal");
     doc.setFontSize(30);
-    doc.text(String(score), MX + 8, gridTop + 26);
+    doc.text(scoreLabel, MX + 8, gridTop + 26);
     setText(INK_MUTED);
     doc.setFont("times", "italic");
     doc.setFontSize(13);
-    doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(String(score)) + 2, gridTop + 26);
+    if (score != null) doc.text(` / ${scoreMax}`, MX + 8 + doc.getTextWidth(scoreLabel) + 2, gridTop + 26);
     const prettyV = verdict.charAt(0) + verdict.slice(1).toLowerCase();
     setText(verdictColor);
     doc.setFont("times", "italic");
@@ -1185,19 +1241,21 @@ function buildBrandedPdf(analysisText, options = {}) {
       doc.text(metric.label.toUpperCase(), x + 5, y + 7, { charSpace: 0.6 });
       setText(isFeature ? CREAM : INK);
       doc.setFont("times", "normal");
-      doc.setFontSize(20);
-      doc.text(metric.value.substring(0, 18), x + 5, y + 20);
-      const gradeW = 12;
+      const valueStr = String(metric.value || "Data unavailable");
+      doc.setFontSize(valueStr.length > 20 ? 14 : 20);
+      doc.text(valueStr.substring(0, 18), x + 5, y + 20);
+      const gradeText = metric.grade || "Data unavailable";
+      const gradeW = gradeText.length > 4 ? 30 : 12;
       const gradeH = 6;
-      const gradeX = x + cardW - 17;
+      const gradeX = x + cardW - (gradeW + 5);
       const gradeY = y + 14;
-      const isTopGrade = metric.grade.startsWith("A");
+      const isTopGrade = /^A[+\-]?$/i.test(gradeText);
       setFill(isTopGrade ? (isFeature ? CREAM : FOREST) : CREAM_DEEP);
       doc.roundedRect(gradeX, gradeY, gradeW, gradeH, 3, 3, "F");
       setText(isTopGrade ? (isFeature ? FOREST : CREAM) : FOREST);
       doc.setFont("times", "italic");
-      doc.setFontSize(9);
-      doc.text(metric.grade, gradeX + gradeW / 2, gradeY + 4.2, { align: "center" });
+      doc.setFontSize(gradeText.length > 4 ? 6.5 : 9);
+      doc.text(gradeText.substring(0, 16), gradeX + gradeW / 2, gradeY + 4.2, { align: "center" });
     });
     drawPageFoot("iii");
   };
@@ -1209,7 +1267,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     drawTitleTwoTone(`Why ${suburbName}`, "", MX, 60, 28);
     drawTitleTwoTone("is ", "moving.", MX, 72, 28);
     const contentBottom = PH - 18;
-    const listStart = 86;
+    const listStart = 88;
     const nWork = Math.max(workingItems.length, 1);
     const slotH = (contentBottom - listStart) / nWork;
     workingItems.forEach((item, i) => {
@@ -1222,15 +1280,14 @@ function buildBrandedPdf(analysisText, options = {}) {
       setText(INK);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text(item.title.substring(0, 55), MX + 14, workY - 2);
+      doc.text(`Reason ${i + 1}`, MX + 14, workY - 2);
       setText(INK_SOFT);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
-      const bodyLines = doc.splitTextToSize(item.body, PW - 2 * MX - 14);
-      const show = bodyLines.slice(0, 3);
+      const bodyLines = doc.splitTextToSize(String(item || "Data unavailable"), PW - 2 * MX - 14);
       let by = workY + 4;
-      show.forEach((line) => {
-        doc.text(line, MX + 14, by);
+      bodyLines.slice(0, 4).forEach((line) => {
+        doc.text(line, MX + 14, by, { maxWidth: PW - 2 * MX - 14 });
         by += 4.5;
       });
       if (i < workingItems.length - 1) {
@@ -1264,11 +1321,12 @@ function buildBrandedPdf(analysisText, options = {}) {
       setText(CRIMSON);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
-      doc.text(item.title.substring(0, 50), MX + 11, flagY);
+      doc.text((item.title || "Data unavailable").substring(0, 50), MX + 11, flagY);
       setText(INK_SOFT);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
-      const bLines = doc.splitTextToSize(item.body, PW - 2 * MX - 11);
+      const bearLine = `${item.title || "Data unavailable"}: ${item.body || "Data unavailable"}`;
+      const bLines = doc.splitTextToSize(bearLine, PW - 2 * MX - 11);
       const bs = bLines.slice(0, 3);
       let fy = flagY + 6;
       bs.forEach((line) => {
