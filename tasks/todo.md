@@ -1,3 +1,33 @@
+# Compare mode PDF regression fix plan (Apr 26)
+
+## Discovery checklist
+
+- [x] Read `api/analyze.js` `SYSTEM_PROMPT` output contract in full.
+- [x] Verify compare-mode prompt requirements for `[[PROPAI_SCORE]]`, `[[PROPAI_VERDICT]]`, `[[PROPAI_WALKAWAY]`, `##` sections, and `[[PROPAI_COMPARE]]`.
+- [x] Read `src/App.jsx` `buildBrandedPdf` and all page render functions.
+- [x] Confirm whether compare mode uses a different page 1-6 renderer path (it does not; same pages, compare only adds page 7).
+- [x] Inspect cover subtitle rendering path for duplicate drawing.
+- [x] Inspect metrics card rendering path for duplicated value/grade visuals.
+- [x] Inspect bull/bear/walkaway/final-call parse paths against current `##` contract.
+
+## Fix checklist
+
+- [x] Implement parser normalization for current `##` contract so compare and suburb modes share the exact same extracted data model.
+- [x] Add robust score/verdict/walkaway fallbacks for compare text where marker presence is inconsistent.
+- [x] Remove duplicate subtitle rendering on cover (render once only).
+- [x] Remove misleading metrics "grade pill" duplication behavior for data values and ensure six real card values map correctly.
+- [x] Make bull and bear section extraction resilient to compare content formatting.
+- [x] Ensure page 6 walk-away and final call are populated from normalized parsed output.
+- [x] Make compare page (page 7) merge JSON compare data + text-derived fallback per field, not all-or-nothing.
+- [x] Keep layout/brand tokens/fonts unchanged.
+- [x] Run lints for edited files and fix introduced issues.
+
+## Review checklist
+
+- [ ] Summarize root causes per broken page.
+- [ ] List changed files.
+- [ ] Provide explicit post-deploy test queries and page-by-page validation checklist.
+
 # PropAI landing redesign integration plan
 
 ## Discovery + constraints

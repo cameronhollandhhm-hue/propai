@@ -57,6 +57,15 @@ const PROP_COMPARE_RE_FULL =
   /\[\[PROPAI_COMPARE\]\]\s*([\s\S]*?)\s*\[\[\/PROPAI_COMPARE\]\]/i;
 const PROP_COMPARE_RE_SINGLE =
   /\[PROPAI_COMPARE\]\s*([\s\S]*?)\[\/PROPAI_COMPARE\]/i;
+const compareParseInfoSeen = new Set();
+
+function logCompareParseInfoOnce(reason, text) {
+  const raw = String(text || "");
+  const key = `${reason}:${raw.length}:${raw.slice(0, 120)}`;
+  if (compareParseInfoSeen.has(key)) return;
+  compareParseInfoSeen.add(key);
+  console.info(`[parsePropaiCompareBlock] ${reason}`);
+}
 
 function stripPropaiCompareBlock(text) {
   let s = String(text || "");
@@ -152,6 +161,69 @@ function findCompareObjectSpan(raw) {
   return null;
 }
 
+function parseReportCompareTitle(title) {
+  const t = String(title || "").trim();
+  if (!t) return null;
+  const vsMatch = t.match(
+    /^(.+?)\s+vs\s+(.+?)(?:\s+(QLD|NSW|VIC|WA|SA|TAS|ACT|NT)\b|$)/i
+  );
+  if (!vsMatch) return null;
+  return { suburb1: vsMatch[1].trim(), suburb2: vsMatch[2].trim() };
+}
+
+function buildCompareDataFromText(text, title) {
+  if (!text || !title) return null;
+  const names = parseReportCompareTitle(title);
+  if (!names) return null;
+
+  const s1Name = names.suburb1;
+  const s2Name = names.suburb2;
+
+  function extractForSuburb(name) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const scoreRe = new RegExp(`${esc}[^\\d]{0,40}(\\d{1,3})\\s*\\/\\s*100`, "i");
+    const scoreMatch = text.match(scoreRe);
+
+    const yieldRe = new RegExp(`${esc}[^\\.\\n]{0,80}?(\\d+(?:\\.\\d+)?%)`, "i");
+    const yieldMatch = text.match(yieldRe);
+
+    const growthRe = new RegExp(
+      `(?:${esc}[^\\.\\n]*?growth|growth[^\\.\\n]*?${esc})[^\\.\\n]{0,60}?(\\d+(?:\\.\\d+)?%)`,
+      "i"
+    );
+    const growthMatch = text.match(growthRe);
+
+    const verdictRe = new RegExp(
+      `${esc}[^\\.\\n]{0,80}?\\b(BUY|HOLD|SKIP|NEGOTIATE)\\b`,
+      "i"
+    );
+    const verdictMatch = text.match(verdictRe);
+
+    return {
+      name,
+      score: scoreMatch ? scoreMatch[1] : null,
+      yield: yieldMatch ? yieldMatch[1] : null,
+      growth: growthMatch ? growthMatch[1] : null,
+      verdict: verdictMatch ? verdictMatch[1].toUpperCase() : null
+    };
+  }
+
+  return {
+    suburb1: extractForSuburb(s1Name),
+    suburb2: extractForSuburb(s2Name)
+  };
+}
+
+function firstNonEmptyCompareValue(...vals) {
+  for (const v of vals) {
+    if (v == null) continue;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    const s = String(v).trim();
+    if (s) return v;
+  }
+  return null;
+}
+
 function parseNamedValueFromCombinedField(fieldValue, suburbA, suburbB) {
   const out = { a: null, b: null };
   const raw = String(fieldValue || "");
@@ -180,7 +252,7 @@ function parseNamedScore(text, suburbName) {
 function parseNamedVerdict(text, suburbName) {
   if (!text || !suburbName) return null;
   const esc = suburbName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = String(text).match(new RegExp(`${esc}\\s*:\\s*(BUY|HOLD|SKIP)`, "i"));
+  const m = String(text).match(new RegExp(`${esc}\\s*:\\s*(BUY|HOLD|SKIP|NEGOTIATE)`, "i"));
   return m ? m[1].toUpperCase() : null;
 }
 
@@ -210,22 +282,22 @@ function parsePropaiCompareBlock(text) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
     }
-    console.warn("[parsePropaiCompareBlock] PROPAI_COMPARE marker not found.");
+    logCompareParseInfoOnce("PROPAI_COMPARE marker not found", raw);
     const looseA = tryParseLooseCompareBlock(raw);
     if (looseA) return looseA;
-    console.warn("[parsePropaiCompareBlock] Failed to parse compare JSON from fallback paths.");
+    logCompareParseInfoOnce("Failed to parse compare JSON from fallback paths", raw);
     return null;
   }
   const data = tryParseCompareJsonBlob(m[1]);
   if (!data?.suburb1 || !data?.suburb2) {
-    console.warn("[parsePropaiCompareBlock] Found marker but failed JSON parse:", m[1]?.slice(0, 240));
+    logCompareParseInfoOnce("Found marker but failed JSON parse", raw);
     const looseB = tryParseLooseCompareBlock(raw);
     if (looseB) return looseB;
-    console.warn("[parsePropaiCompareBlock] Failed to parse compare block after marker + loose fallback.");
+    logCompareParseInfoOnce("Failed to parse compare block after marker + loose fallback", raw);
     return null;
   }
   if (!raw.match(/\[\[?\s*PROPAI_COMPARE\s*\]?\]/i)) {
-    console.warn("[parsePropaiCompareBlock] Compare parse succeeded without explicit marker.");
+    logCompareParseInfoOnce("Compare parse succeeded without explicit marker", raw);
   }
   const prose = stripPropaiCompareBlock(raw);
   return { data, prose };
@@ -790,20 +862,36 @@ function parsePropaiScore(text) {
   if (!text) return null;
   const m = text.match(/\[\[PROPAI_SCORE\]\]\s*(\d{1,3})\s*\/\s*100/i);
   if (m) return parseInt(m[1], 10);
+  const anyScore = text.match(/\b(\d{1,3})\s*\/\s*100\b/);
+  if (anyScore) return parseInt(anyScore[1], 10);
   const fallback = text.match(/score[^\d]{0,20}(\d{1,3})\s*\/\s*100/i);
   return fallback ? parseInt(fallback[1], 10) : null;
 }
 
 function parsePropaiVerdict(text) {
   if (!text) return null;
-  const m = text.match(/\[\[PROPAI_VERDICT\]\]\s*(BUY|HOLD|SKIP)/i);
-  return m ? m[1].toUpperCase() : null;
+  let m = text.match(/\[\[PROPAI_VERDICT\]\]\s*(BUY|HOLD|SKIP|NEGOTIATE)/i);
+  if (m) return m[1].toUpperCase();
+  const finalCall = text.match(/##\s*FINAL CALL\s*([\s\S]*?)(?=##\s|\[\[|$)/i);
+  if (finalCall) {
+    const v = finalCall[1].match(/\b(BUY|HOLD|SKIP|NEGOTIATE)\b/i);
+    if (v) return v[1].toUpperCase();
+  }
+  m = text.match(/verdict[:\s]+(BUY|HOLD|SKIP|NEGOTIATE)/i);
+  if (m) return m[1].toUpperCase();
+  const firstChunk = text.slice(0, 2000);
+  m = firstChunk.match(/\b(BUY|HOLD|SKIP|NEGOTIATE)\b/);
+  if (m) return m[1].toUpperCase();
+  return null;
 }
 
 function parsePropaiWalkaway(text) {
   if (!text) return null;
   const m = text.match(/\[\[PROPAI_WALKAWAY\]\]\s*(\$[\d.,]+K?\s*-\s*\$[\d.,]+K?)/i);
-  return m ? m[1].trim() : null;
+  if (m) return m[1].trim();
+  const fallback = text.match(/\$[\d.,]+K?\s*[-–—]\s*\$[\d.,]+K?/i);
+  if (fallback) return fallback[0].trim();
+  return null;
 }
 
 function parsePropaiMetrics(text) {
@@ -824,6 +912,15 @@ function parsePropaiMetrics(text) {
     }
   }
   if (rows.length === 0) {
+    const fallbackRows = [];
+    const metricRegex = /\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([A-F][+\-]?)\s*\|/g;
+    let m;
+    while ((m = metricRegex.exec(text)) !== null && fallbackRows.length < 6) {
+      const metric = String(m[1] || "").trim();
+      if (/^metric$/i.test(metric)) continue;
+      fallbackRows.push({ metric, value: String(m[2] || "").trim(), grade: String(m[3] || "").trim() });
+    }
+    if (fallbackRows.length) return fallbackRows;
     console.warn("[parsePropaiMetrics] No metric rows parsed from section:", section[1]);
   }
   return rows;
@@ -842,6 +939,7 @@ function parsePropaiBullCase(text) {
     const m = line.match(/^(\d+)[.)]\s+(.+)$/);
     if (m) items.push(m[2].trim());
     else if (/^[-*•]\s+/.test(line)) items.push(line.replace(/^[-*•]\s+/, "").trim());
+    else if (/^[A-Za-z][A-Za-z\s()]+:\s+.+/.test(line)) items.push(line.trim());
   }
   if (items.length === 0) {
     console.warn("[parsePropaiBullCase] No items parsed from section:", section[1]);
@@ -862,6 +960,9 @@ function parsePropaiBearCase(text) {
     const m = line.match(/^\*{0,2}([^:*]+?)\*{0,2}\s*[:—]\s*(.+)$/);
     if (m) {
       items.push({ title: m[1].trim(), body: m[2].trim() });
+    } else if (/^[-*•]\s+/.test(line)) {
+      const body = line.replace(/^[-*•]\s+/, "").trim();
+      if (body) items.push({ title: "Risk", body });
     }
   }
   if (items.length === 0) {
@@ -1038,7 +1139,7 @@ function buildBrandedPdf(analysisText, options = {}) {
       ? FOREST
       : verdict === "SKIP"
         ? CRIMSON
-        : verdict === "HOLD"
+        : verdict === "HOLD" || verdict === "NEGOTIATE"
           ? AMBER
           : INK_MUTED;
   const refBase = compareMeta ? String(compareMeta.suburb1 || "SUB") : suburbName;
@@ -1083,13 +1184,17 @@ function buildBrandedPdf(analysisText, options = {}) {
         .find(Boolean);
       if (firstLine) return firstLine;
     }
-    if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP") {
+    if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP" || verdict === "NEGOTIATE") {
       return `${verdict} — data-backed recommendation based on current parsed metrics and risk profile.`;
     }
     return "Data unavailable";
   })();
 
   const compareBlockParsed = parsePropaiCompareBlock(analysisText);
+  const reportTitle = compareMeta
+    ? `${compareMeta.suburb1} vs ${compareMeta.suburb2} ${compareMeta.state || ""}`.trim()
+    : suburbName;
+  const compareFromText = buildCompareDataFromText(analysisText, reportTitle);
   const coverSubtitle = compareMeta
     ? `A rentvestor's analysis of ${compareMeta.suburb1} vs ${compareMeta.suburb2}, prepared by PropAI. Deal Score, Walk-Away Number, and full negotiation strategy inside.`
     : `A rentvestor's analysis of ${suburbName}, prepared by PropAI. Deal Score, Walk-Away Number, and full negotiation strategy inside.`;
@@ -1115,9 +1220,24 @@ function buildBrandedPdf(analysisText, options = {}) {
     },
     winner: { name: "", reason: "" }
   };
-  const effectiveCompareData =
+  const jsonCompareData =
     compareBlockParsed?.data?.suburb1 && compareBlockParsed?.data?.suburb2
       ? compareBlockParsed.data
+      : null;
+  const pickCompareSuburb = (jsonSuburb, textSuburb, fallbackSuburb, nameFallback) => ({
+    name: firstNonEmptyCompareValue(jsonSuburb?.name, textSuburb?.name, fallbackSuburb?.name, nameFallback) || nameFallback,
+    score: firstNonEmptyCompareValue(jsonSuburb?.score, textSuburb?.score, fallbackSuburb?.score),
+    yield: firstNonEmptyCompareValue(jsonSuburb?.yield, textSuburb?.yield, fallbackSuburb?.yield),
+    growth: firstNonEmptyCompareValue(jsonSuburb?.growth, textSuburb?.growth, fallbackSuburb?.growth),
+    verdict: firstNonEmptyCompareValue(jsonSuburb?.verdict, textSuburb?.verdict, fallbackSuburb?.verdict)
+  });
+  const effectiveCompareData =
+    compareMeta
+      ? {
+          suburb1: pickCompareSuburb(jsonCompareData?.suburb1, compareFromText?.suburb1, fallbackCompareData.suburb1, compareNameA),
+          suburb2: pickCompareSuburb(jsonCompareData?.suburb2, compareFromText?.suburb2, fallbackCompareData.suburb2, compareNameB),
+          winner: jsonCompareData?.winner || { name: "", reason: "" }
+        }
       : fallbackCompareData;
   const formatCompareScore = (v) => {
     if (v == null || v === "") return "Data unavailable";
@@ -1126,8 +1246,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     if (/^\d{1,3}$/.test(s)) return `${s}/100`;
     return s;
   };
-  if (compareMeta && !(compareBlockParsed?.data?.suburb1 && compareBlockParsed?.data?.suburb2)) {
-    console.warn("[buildBrandedPdf] Using compare fallback data because [[PROPAI_COMPARE]] was missing or unparsable.");
+  if (compareMeta && !jsonCompareData && compareFromText?.suburb1 && compareFromText?.suburb2) {
+    console.info("[buildBrandedPdf] Using text-derived compare fallback.");
   }
 
   const drawCover = () => {
@@ -1175,8 +1295,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_SOFT);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    const tag = doc.splitTextToSize(coverSubtitle, 130);
-    doc.text(tag, MX, 214);
+    // Subtitle is rendered once above; avoid duplicate cover description.
     setText(INK_MUTED);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
@@ -1320,17 +1439,19 @@ function buildBrandedPdf(analysisText, options = {}) {
       doc.setFontSize(valueStr.length > 20 ? 14 : 20);
       doc.text(valueStr.substring(0, 18), x + 5, y + 20);
       const gradeText = metric.grade || "Data unavailable";
-      const gradeW = gradeText.length > 4 ? 30 : 12;
-      const gradeH = 6;
-      const gradeX = x + cardW - (gradeW + 5);
-      const gradeY = y + 14;
-      const isTopGrade = /^A[+\-]?$/i.test(gradeText);
-      setFill(isTopGrade ? (isFeature ? CREAM : FOREST) : CREAM_DEEP);
-      doc.roundedRect(gradeX, gradeY, gradeW, gradeH, 3, 3, "F");
-      setText(isTopGrade ? (isFeature ? FOREST : CREAM) : FOREST);
-      doc.setFont("times", "italic");
-      doc.setFontSize(gradeText.length > 4 ? 6.5 : 9);
-      doc.text(gradeText.substring(0, 16), gradeX + gradeW / 2, gradeY + 4.2, { align: "center" });
+      if (/^[A-F][+\-]?$/i.test(gradeText)) {
+        const gradeW = 12;
+        const gradeH = 6;
+        const gradeX = x + cardW - 17;
+        const gradeY = y + 14;
+        const isTopGrade = /^A[+\-]?$/i.test(gradeText);
+        setFill(isTopGrade ? (isFeature ? CREAM : FOREST) : CREAM_DEEP);
+        doc.roundedRect(gradeX, gradeY, gradeW, gradeH, 3, 3, "F");
+        setText(isTopGrade ? (isFeature ? FOREST : CREAM) : FOREST);
+        doc.setFont("times", "italic");
+        doc.setFontSize(9);
+        doc.text(gradeText, gradeX + gradeW / 2, gradeY + 4.2, { align: "center" });
+      }
     });
     drawPageFoot("iii");
   };
@@ -1493,6 +1614,11 @@ function buildBrandedPdf(analysisText, options = {}) {
     const data = effectiveCompareData;
     const s1 = data?.suburb1;
     const s2 = data?.suburb2;
+    const valueOrUnavailable = (v) => {
+      if (v == null) return "Data unavailable";
+      const s = String(v).trim();
+      return s ? s : "Data unavailable";
+    };
     const win = normalizeCompareWinner(data || {});
     const n1 = clean(String(s1?.name || compareMeta?.suburb1 || "Suburb A"));
     const n2 = clean(String(s2?.name || compareMeta?.suburb2 || "Suburb B"));
@@ -1507,12 +1633,12 @@ function buildBrandedPdf(analysisText, options = {}) {
         a: formatCompareScore(s1?.score),
         b: formatCompareScore(s2?.score)
       },
-      { label: "YIELD", a: s1?.yield || "Data unavailable", b: s2?.yield || "Data unavailable" },
-      { label: "GROWTH", a: s1?.growth || "Data unavailable", b: s2?.growth || "Data unavailable" },
+      { label: "YIELD", a: valueOrUnavailable(s1?.yield), b: valueOrUnavailable(s2?.yield) },
+      { label: "GROWTH", a: valueOrUnavailable(s1?.growth), b: valueOrUnavailable(s2?.growth) },
       {
         label: "VERDICT",
-        a: s1?.verdict || "Data unavailable",
-        b: s2?.verdict || "Data unavailable"
+        a: valueOrUnavailable(s1?.verdict),
+        b: valueOrUnavailable(s2?.verdict)
       }
     ];
     let cy = 86;
