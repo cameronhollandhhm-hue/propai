@@ -230,6 +230,14 @@ For compare reports (two suburbs), after all other output you MUST emit exactly 
   "suburb1": { "name": "<first suburb>", "score": <number>, "yield": "<percent>", "growth": "<percent>", "verdict": "BUY|HOLD|SKIP" },
   "suburb2": { "name": "<second suburb>", "score": <number>, "yield": "<percent>", "growth": "<percent>", "verdict": "BUY|HOLD|SKIP" }
 }
+[[/PROPAI_COMPARE]]
+Worked example:
+[[PROPAI_COMPARE]]
+{
+  "suburb1": { "name": "Kirwan", "score": 76, "yield": "5.0%", "growth": "24.4%", "verdict": "BUY" },
+  "suburb2": { "name": "Aitkenvale", "score": 72, "yield": "5.2%", "growth": "22.2%", "verdict": "BUY" }
+}
+[[/PROPAI_COMPARE]]
 This is REQUIRED for compare reports. Emit nothing else after this block.
 Your output will be parsed by regex. Any deviation from the structure above — missing tokens, wrong capitalisation, empty table cells, extra commentary before [[PROPAI_SCORE]] — will cause the report to render as broken. Emit ONLY the structured output. Do not add preamble. Do not add a closing sign-off. If this is a comparison of two suburbs, include data for BOTH suburbs in every section, labelled clearly (e.g. 'Kirwan: $585K | Aitkenvale: $620K').`;
 

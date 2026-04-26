@@ -303,10 +303,7 @@ function parsePropaiCompareBlock(text) {
       const tail = raw.slice(from);
       const endM = tail.match(/\[\[?\s*\/\s*PROPAI_COMPARE\s*\]?\]/i);
       const inner = endM ? tail.slice(0, endM.index) : tail;
-      const rawJsonString = String(inner || "").trim();
-      console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
       const data = tryParseCompareJsonBlob(inner);
-      console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
       if (data?.suburb1 && data?.suburb2) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
@@ -315,10 +312,7 @@ function parsePropaiCompareBlock(text) {
       /```(?:json)?\s*(\{[\s\S]*?"suburb1"[\s\S]*?\})\s*```/i
     );
     if (fenced) {
-      const rawJsonString = String(fenced[1] || "").trim();
-      console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
       const data = tryParseCompareJsonBlob(fenced[1]);
-      console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
       if (data?.suburb1 && data?.suburb2) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
@@ -329,10 +323,7 @@ function parsePropaiCompareBlock(text) {
     logCompareParseInfoOnce("Failed to parse compare JSON from fallback paths", raw);
     return null;
   }
-  const rawJsonString = String(m[1] || "").trim();
-  console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
   const data = tryParseCompareJsonBlob(m[1]);
-  console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
   if (!data?.suburb1 || !data?.suburb2) {
     logCompareParseInfoOnce("Found marker but failed JSON parse", raw);
     const looseB = tryParseLooseCompareBlock(raw);
@@ -1076,6 +1067,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const compareMeta = options.compareMeta;
   const cashflowBody = extractSection(analysisText, "CASHFLOW");
   const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
+  const srcDisplay = cleanForDisplay(src);
 
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   const PW = 210;
@@ -1173,8 +1165,8 @@ function buildBrandedPdf(analysisText, options = {}) {
 
   let suburbName = extractSuburbName(analysisText, options.userPrompt || "");
   if (/^report$/i.test(String(suburbName || "").trim())) suburbName = "Property";
-  let stateCode = (src.match(/\b(QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "QLD";
-  const postcode = (src.match(/\b(\d{4})\b/)?.[1]) || "";
+  let stateCode = (srcDisplay.match(/\b(QLD|NSW|VIC|WA|SA|TAS|NT|ACT)\b/)?.[1]) || "QLD";
+  const postcode = (srcDisplay.match(/\b(\d{4})\b/)?.[1]) || "";
   if (compareMeta) {
     suburbName = `${compareMeta.suburb1} vs ${compareMeta.suburb2}`;
     stateCode = compareMeta.state;
@@ -1187,7 +1179,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const parsedVerdict = parsePropaiVerdict(analysisText);
   const verdict = parsedVerdict || "Data unavailable";
   const walkAway = parsePropaiWalkaway(analysisText) || "Data unavailable";
-  const thesisMatch = src.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
+  const thesisMatch = srcDisplay.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
   const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
   const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
   const verdictColor =
@@ -1201,7 +1193,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const refBase = compareMeta ? String(compareMeta.suburb1 || "SUB") : suburbName;
   const refPrefix = refBase.replace(/\s.*/, "").slice(0, 3).toUpperCase() || "RPT";
 
-  const execParas = src
+  const execParas = srcDisplay
     .split(/\n\n+/)
     .map((p) => clean(stripMarkdownSymbols(p)))
     .filter((p) => p.length > 80 && !p.trim().startsWith("#") && !p.includes("|"))
@@ -1682,10 +1674,6 @@ function buildBrandedPdf(analysisText, options = {}) {
     const data = effectiveCompareData;
     const s1 = data?.suburb1;
     const s2 = data?.suburb2;
-    console.log("[DEBUG] suburb1.score:", s1?.score, "type:", typeof s1?.score);
-    console.log("[DEBUG] suburb1 keys:", Object.keys(s1 || {}));
-    console.log("[DEBUG] suburb2.score:", s2?.score, "type:", typeof s2?.score);
-    console.log("[DEBUG] suburb2 keys:", Object.keys(s2 || {}));
     const valueOrUnavailable = (v) => {
       if (v == null) return "Data unavailable";
       const s = String(v).trim();
