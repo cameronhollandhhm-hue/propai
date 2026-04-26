@@ -1,49 +1,49 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { jsPDF } from "jspdf";
 
-// ─── MEGA SYSTEM PROMPT ───────────────────────────────────────────────────────
-const SYSTEM = `You are PropAI — an elite Australian property investment analyst. Search the web for live data before every answer.
+// ??? MEGA SYSTEM PROMPT ???????????????????????????????????????????????????????
+const SYSTEM = `You are PropAI ? an elite Australian property investment analyst. Search the web for live data before every answer.
 
 For SUBURB analysis output exactly:
-🏡 [SUBURB, STATE]
-⭐ DEAL SCORE: X/100 | [💰 CASH FLOW / 📈 GROWTH / ⚖️ BALANCED]
-⚡ QUICK TAKE: [growth signal] | [cashflow] | [who it suits]
-👉 VERDICT: BUY / WATCH / AVOID
-📊 SCORE BREAKDOWN: Growth X/30 | Yield X/20 | Demand X/20 | Fundamentals X/15 | Liquidity X/15
-📊 DATA: Median $ | 12m% | Yield% | Rent$/wk | Vacancy% | DOM days | Confidence HIGH/MED/LOW
-📈 MARKET: [3 lines — what's driving this NOW]
-💸 CASHFLOW: Rent $ | Mortgage $ | Net +/-$/wk (20% deposit, 3.85% rate)
-⚠️ RISKS: [2-3 specific risks]
-🎯 GAME PLAN: Buy $Xk-$Xk | Type | Compare: [2 suburbs]
-🧠 CONFIDENCE: HIGH/MED/LOW (X/10)
-💡 INVESTOR EDGE: [demand driver] | [supply constraint] | [forward thesis]
-🎯 FINAL CALL: If this were my money: 👉 I would BUY/WAIT/PASS at $X. Reason: [one line]
+?? [SUBURB, STATE]
+? DEAL SCORE: X/100 | [?? CASH FLOW / ?? GROWTH / ?? BALANCED]
+? QUICK TAKE: [growth signal] | [cashflow] | [who it suits]
+?? VERDICT: BUY / WATCH / AVOID
+?? SCORE BREAKDOWN: Growth X/30 | Yield X/20 | Demand X/20 | Fundamentals X/15 | Liquidity X/15
+?? DATA: Median $ | 12m% | Yield% | Rent$/wk | Vacancy% | DOM days | Confidence HIGH/MED/LOW
+?? MARKET: [3 lines ? what's driving this NOW]
+?? CASHFLOW: Rent $ | Mortgage $ | Net +/-$/wk (20% deposit, 3.85% rate)
+?? RISKS: [2-3 specific risks]
+?? GAME PLAN: Buy $Xk-$Xk | Type | Compare: [2 suburbs]
+?? CONFIDENCE: HIGH/MED/LOW (X/10)
+?? INVESTOR EDGE: [demand driver] | [supply constraint] | [forward thesis]
+?? FINAL CALL: If this were my money: ?? I would BUY/WAIT/PASS at $X. Reason: [one line]
 
 For DEAL analysis (user gives suburb + price + rent) output:
-🏠 DEAL ANALYSIS — [SUBURB]
-⭐ DEAL SCORE: X/100
-👉 INSTANT VERDICT: BUY/NEGOTIATE/AVOID — [one sentence]
-📊 Purchase $ | Rent $/wk | Yield% | Deposit $ | Stamp Duty $ | Total Cash $
-💸 Rent $ | Mortgage $ | Rates+Mgmt $ | NET +/-$/wk → +/-$/yr
-💰 VALUE SIGNAL: Est. Market Value $Xk-$Xk | Asking $Xk | 👉 UNDERVALUED/FAIR VALUE/OVERPRICED ~$Xk
-🎯 NEGOTIATION: Target $Xk | Walk Away $Xk | Opening $Xk | Tactic 1 | Tactic 2 | Tactic 3
-🔍 WHY THIS DEAL EXISTS: [3 reasons]
-🔁 BETTER ALTERNATIVE: [suburb] — [why]
-🧠 CONFIDENCE: X/10
-💡 INVESTOR EDGE: [insider angle]
-🎯 FINAL CALL: 👉 BUY/NEGOTIATE/PASS at $X. Reason: [one line]
+?? DEAL ANALYSIS ? [SUBURB]
+? DEAL SCORE: X/100
+?? INSTANT VERDICT: BUY/NEGOTIATE/AVOID ? [one sentence]
+?? Purchase $ | Rent $/wk | Yield% | Deposit $ | Stamp Duty $ | Total Cash $
+?? Rent $ | Mortgage $ | Rates+Mgmt $ | NET +/-$/wk ? +/-$/yr
+?? VALUE SIGNAL: Est. Market Value $Xk-$Xk | Asking $Xk | ?? UNDERVALUED/FAIR VALUE/OVERPRICED ~$Xk
+?? NEGOTIATION: Target $Xk | Walk Away $Xk | Opening $Xk | Tactic 1 | Tactic 2 | Tactic 3
+?? WHY THIS DEAL EXISTS: [3 reasons]
+?? BETTER ALTERNATIVE: [suburb] ? [why]
+?? CONFIDENCE: X/10
+?? INVESTOR EDGE: [insider angle]
+?? FINAL CALL: ?? BUY/NEGOTIATE/PASS at $X. Reason: [one line]
 
 For DAILY DEALS output:
-🔥 TODAY'S TOP DEALS
-🏆 DEAL OF THE DAY: [Suburb] Score X/100 | Value signal | Cashflow | 👉 BUY
-📋 2-5: [Suburb] — X/100 | [one line each]
-⚠️ AVOID: [Suburb] — [why]
+?? TODAY'S TOP DEALS
+?? DEAL OF THE DAY: [Suburb] Score X/100 | Value signal | Cashflow | ?? BUY
+?? 2-5: [Suburb] ? X/100 | [one line each]
+?? AVOID: [Suburb] ? [why]
 
-For COMPARE (when user asks to compare 2 suburbs) you MUST output this JSON block FIRST before any prose: [[PROPAI_COMPARE]] {"suburb1":{"name":"SUBURB1","score":78,"yield":"4.8%","growth":"+24%","verdict":"BUY"},"suburb2":{"name":"SUBURB2","score":72,"yield":"3.6%","growth":"+19%","verdict":"NEGOTIATE"},"winner":{"name":"SUBURB1","reason":"One sentence why."}} [[/PROPAI_COMPARE]] Then write full prose analysis below. verdict must be BUY / NEGOTIATE / SKIP. Replace ALL example values with real researched data from web search. Never output the placeholder numbers 78, 4.8%, +24%, 72, 3.6%, or +19% — those are examples only.
+For COMPARE (when user asks to compare 2 suburbs) you MUST output this JSON block FIRST before any prose: [[PROPAI_COMPARE]] {"suburb1":{"name":"SUBURB1","score":78,"yield":"4.8%","growth":"+24%","verdict":"BUY"},"suburb2":{"name":"SUBURB2","score":72,"yield":"3.6%","growth":"+19%","verdict":"NEGOTIATE"},"winner":{"name":"SUBURB1","reason":"One sentence why."}} [[/PROPAI_COMPARE]] Then write full prose analysis below. verdict must be BUY / NEGOTIATE / SKIP. Replace ALL example values with real researched data from web search. Never output the placeholder numbers 78, 4.8%, +24%, 72, 3.6%, or +19% ? those are examples only.
 
-DATA ACCURACY RULES — CRITICAL:
-1. ALWAYS distinguish suburb-specific data from region-wide data. If you only have Townsville-wide or LGA-wide figures, label them exactly as "(Townsville-wide)" or "(region avg)" — NEVER present them as the suburb's own figure.
-2. For median house/unit price, ONLY use figures you can confirm are for the specific suburb being analysed. If you cannot confirm suburb-level median, write the figure as "~$XXXk (estimated, suburb-level data limited)" and add a Red Flag: "Median based on limited suburb data — verify with agent before offering."
+DATA ACCURACY RULES ? CRITICAL:
+1. ALWAYS distinguish suburb-specific data from region-wide data. If you only have Townsville-wide or LGA-wide figures, label them exactly as "(Townsville-wide)" or "(region avg)" ? NEVER present them as the suburb's own figure.
+2. For median house/unit price, ONLY use figures you can confirm are for the specific suburb being analysed. If you cannot confirm suburb-level median, write the figure as "~$XXXk (estimated, suburb-level data limited)" and add a Red Flag: "Median based on limited suburb data ? verify with agent before offering."
 3. NEVER inflate a suburb median by substituting LGA, postcode-wide, or premium-pocket figures. If Kirwan's true median is ~$580k and only Townsville-wide ($750k+) data is available, report Kirwan's figure as "~$580k (estimated)" NOT "$759k".
 4. Add a Data Confidence line at the end of the KEY METRICS SNAPSHOT that reads: "Data Confidence: HIGH / MEDIUM / LOW" based on how many figures are suburb-specific vs region-wide. HIGH = 5+ suburb-specific metrics. MEDIUM = 2-4. LOW = 0-1.
 5. For any metric where the source is ambiguous or older than 6 months, append "(verify)" after the figure.
@@ -52,7 +52,7 @@ DATA ACCURACY RULES — CRITICAL:
 
 Rules: Search web first. Max 3-4 lines per section. No padding. RBA rate 3.85%. Always recommend mortgage broker + conveyancer.`;
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// ??? HELPERS ?????????????????????????????????????????????????????????????????
 const PROP_COMPARE_RE_FULL =
   /\[\[PROPAI_COMPARE\]\]\s*([\s\S]*?)\s*\[\[\/PROPAI_COMPARE\]\]/i;
 const PROP_COMPARE_RE_SINGLE =
@@ -373,7 +373,7 @@ function verdictBadgeStyles(verdict) {
   if (v === "BUY") return { bg: "#dcfce7", fg: "#166534", label: "BUY" };
   if (v === "WATCH") return { bg: "#ffedd5", fg: "#c2410c", label: "WATCH" };
   if (v === "SKIP" || v === "AVOID") return { bg: "#fee2e2", fg: "#b91c1c", label: v === "AVOID" ? "AVOID" : "SKIP" };
-  return { bg: "#f3f4f6", fg: "#374151", label: verdict || "—" };
+  return { bg: "#f3f4f6", fg: "#374151", label: verdict || "?" };
 }
 
 function CompareSuburbCards({ data, stateLabel }) {
@@ -407,7 +407,7 @@ function CompareSuburbCards({ data, stateLabel }) {
             letterSpacing: "-0.02em"
           }}
         >
-          {s.name || "—"}
+          {s.name || "?"}
           {stateLabel ? (
             <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.9, marginLeft: 8 }}>{stateLabel}</span>
           ) : null}
@@ -415,15 +415,15 @@ function CompareSuburbCards({ data, stateLabel }) {
         <div style={{ padding: "14px 16px", color: "#1f2937", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, lineHeight: 1.65 }}>
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Score</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: brandGreen }}>{s.score != null ? `${s.score}/100` : "—"}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: brandGreen }}>{s.score != null ? `${s.score}/100` : "?"}</div>
           </div>
           <div style={{ marginBottom: 8 }}>
             <span style={{ color: "#6b7280" }}>Yield </span>
-            <span style={{ fontWeight: 600 }}>{s.yield || "—"}</span>
+            <span style={{ fontWeight: 600 }}>{s.yield || "?"}</span>
           </div>
           <div style={{ marginBottom: 12 }}>
             <span style={{ color: "#6b7280" }}>Growth </span>
-            <span style={{ fontWeight: 600 }}>{s.growth || "—"}</span>
+            <span style={{ fontWeight: 600 }}>{s.growth || "?"}</span>
           </div>
           <div>
             <span
@@ -467,7 +467,7 @@ function CompareSuburbCards({ data, stateLabel }) {
           }}
         >
           <div style={{ fontWeight: 800, fontSize: 11, color: brandGreen, marginBottom: 6, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Winner — {win.name || "Data unavailable"}
+            Winner ? {win.name || "Data unavailable"}
           </div>
           <div>{win.reason || ""}</div>
         </div>
@@ -698,7 +698,7 @@ function renderChatContent(text) {
         React.createElement(
           "div",
           { key: `b${key++}`, style: { display: "flex", gap: 8, marginBottom: 4 } },
-          React.createElement("span", { style: { color: "#e8b84b", flexShrink: 0 } }, "•"),
+          React.createElement("span", { style: { color: "#e8b84b", flexShrink: 0 } }, "?"),
           React.createElement("span", null, formatInlineChatParts(inner))
         )
       );
@@ -759,7 +759,7 @@ function extractReportTitle(analysisText) {
   const head = lines.slice(0, 45);
 
   for (const line of head) {
-    const house = line.match(/🏡\s*(.+)/u);
+    const house = line.match(/\u{1F3E1}\s*(.+)/u);
     if (house) {
       const t = cleanPdfTitle(house[1]);
       if (t) return t;
@@ -788,8 +788,8 @@ function extractReportTitle(analysisText) {
   }
 
   for (const line of head) {
-    if (/🏠/u.test(line) && /DEAL\s+ANALYSIS/i.test(line)) {
-      const t = cleanPdfTitle(line.replace(/^🏠\s*/u, ""));
+    if (/??/u.test(line) && /DEAL\s+ANALYSIS/i.test(line)) {
+      const t = cleanPdfTitle(line.replace(/^??\s*/u, ""));
       if (t) return t;
     }
     if (/^DEAL\s+ANALYSIS/i.test(stripMarkdownSymbols(line))) {
@@ -799,7 +799,7 @@ function extractReportTitle(analysisText) {
   }
 
   for (const line of head) {
-    if (/🔥/u.test(line) && /TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
+    if (/??/u.test(line) && /TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
     if (/^TODAY'?S\s+TOP\s+DEALS/i.test(stripMarkdownSymbols(line))) return "Today's top deals";
   }
 
@@ -827,7 +827,7 @@ function slugForFilename(title) {
 }
 
 /* Pipes inside [] are literal; ranges below are unioned (same intent as user list). */
-/* Union of ranges only — `|` inside [] is literal in JS, not alternation. */
+/* Union of ranges only ? `|` inside [] is literal in JS, not alternation. */
 const stripEmojis = (text) => {
   return String(text)
     .replace(
@@ -933,7 +933,7 @@ function parsePropaiWalkaway(text) {
   if (!text) return null;
   const m = text.match(/\[\[PROPAI_WALKAWAY\]\]\s*(\$[\d.,]+K?\s*-\s*\$[\d.,]+K?)/i);
   if (m) return m[1].trim();
-  const fallback = text.match(/\$[\d.,]+K?\s*[-–—]\s*\$[\d.,]+K?/i);
+  const fallback = text.match(/\$[\d.,]+K?\s*[-??]\s*\$[\d.,]+K?/i);
   if (fallback) return fallback[0].trim();
   return null;
 }
@@ -982,7 +982,7 @@ function parsePropaiBullCase(text) {
   for (const line of lines) {
     const m = line.match(/^(\d+)[.)]\s+(.+)$/);
     if (m) items.push(m[2].trim());
-    else if (/^[-*•]\s+/.test(line)) items.push(line.replace(/^[-*•]\s+/, "").trim());
+    else if (/^[-*?]\s+/.test(line)) items.push(line.replace(/^[-*?]\s+/, "").trim());
     else if (/^[A-Za-z][A-Za-z\s()]+:\s+.+/.test(line)) items.push(line.trim());
   }
   if (items.length === 0) {
@@ -1001,11 +1001,11 @@ function parsePropaiBearCase(text) {
   const items = [];
   const lines = section[1].split("\n").map((l) => l.trim()).filter(Boolean);
   for (const line of lines) {
-    const m = line.match(/^\*{0,2}([^:*]+?)\*{0,2}\s*[:—]\s*(.+)$/);
+    const m = line.match(/^\*{0,2}([^:*]+?)\*{0,2}\s*[:?]\s*(.+)$/);
     if (m) {
       items.push({ title: m[1].trim(), body: m[2].trim() });
-    } else if (/^[-*•]\s+/.test(line)) {
-      const body = line.replace(/^[-*•]\s+/, "").trim();
+    } else if (/^[-*?]\s+/.test(line)) {
+      const body = line.replace(/^[-*?]\s+/, "").trim();
       if (body) items.push({ title: "Risk", body });
     }
   }
@@ -1141,7 +1141,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_MUTED);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.text("PROPAI  ·  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
+    doc.text("PROPAI  �  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
     doc.setFont("times", "italic");
     doc.setFontSize(9);
     doc.text(String(pageRoman), PW - MX, PH - 12, { align: "right" });
@@ -1248,11 +1248,11 @@ function buildBrandedPdf(analysisText, options = {}) {
       const reason = clean(String(compareBlockParsed.data.winner.reason || ""));
       if (reason) {
         const lead = verdict === "Data unavailable" ? "HOLD" : verdict;
-        return `${lead} — ${winnerName ? `${winnerName} edges this setup because ` : ""}${reason}`;
+        return `${lead} ? ${winnerName ? `${winnerName} edges this setup because ` : ""}${reason}`;
       }
     }
     if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP") {
-      return `${verdict} — data-backed recommendation based on current parsed metrics and risk profile.`;
+      return `${verdict} ? data-backed recommendation based on current parsed metrics and risk profile.`;
     }
     return "Data unavailable";
   })();
@@ -1332,7 +1332,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     const rightX = PW - MX;
     doc.text("CONFIDENTIAL REPORT", rightX, 20, { align: "right", charSpace: 0.6 });
     doc.text(today.toUpperCase(), rightX, 24, { align: "right", charSpace: 0.6 });
-    doc.text(`REF · ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
+    doc.text(`REF � ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
     drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
     const titleStr = compareMeta
       ? `${compareMeta.suburb1} vs ${compareMeta.suburb2},`
@@ -1386,7 +1386,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(CREAM);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.text(`VERDICT  ·  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
+    doc.text(`VERDICT  �  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
   };
 
   const drawExecSummary = () => {
@@ -1643,7 +1643,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(PAPER);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("FINAL CALL  ·  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
+    doc.text("FINAL CALL  �  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
     doc.setFont("times", "normal");
     doc.setFontSize(17);
     const fcLines = doc.splitTextToSize(finalCallText.substring(0, 140), PW - 2 * MX - 20);
@@ -1884,12 +1884,12 @@ function computeMortgageOutputs(price, depositPct, annualRatePct, termYears, rep
 }
 
 function formatAud(n) {
-  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  if (n === null || n === undefined || Number.isNaN(n)) return "?";
   return Number(n).toLocaleString("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 });
 }
 
 function formatAudPlain(n) {
-  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  if (n === null || n === undefined || Number.isNaN(n)) return "?";
   return Number(n).toLocaleString("en-AU", { maximumFractionDigits: 0 });
 }
 
@@ -2134,7 +2134,7 @@ function MortgageCalculatorPanel({ analysisText }) {
             ))}
           </div>
           <div style={{ marginTop: 10, fontSize: 10, color: "#4b5563", lineHeight: 1.5 }}>
-            Indicative only — not financial advice. Confirm repayments with your lender.
+            Indicative only ? not financial advice. Confirm repayments with your lender.
           </div>
         </div>
       )}
@@ -2142,7 +2142,7 @@ function MortgageCalculatorPanel({ analysisText }) {
   );
 }
 
-// ─── LANDING PAGE ─────────────────────────────────────────────────────────────
+// ??? LANDING PAGE ?????????????????????????????????????????????????????????????
 function Landing({ onStart }) {
   return (
     <div className="landing-page">
@@ -2203,7 +2203,7 @@ function Landing({ onStart }) {
         .landing-page .hc-metric .value.pos { color: var(--mint); }
         .landing-page .hc-metric .value.warn { color: var(--orange); }
         .landing-page .hc-verdict-side { background: var(--green); color: var(--paper); padding: 32px; text-align: center; border-radius: var(--r); position: relative; overflow: hidden; }
-        .landing-page .hc-verdict-side::before { content: '§ LIVE'; position: absolute; top: 12px; right: 14px; font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; color: var(--yellow); opacity: 0.7; }
+        .landing-page .hc-verdict-side::before { content: '� LIVE'; position: absolute; top: 12px; right: 14px; font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; color: var(--yellow); opacity: 0.7; }
         .landing-page .hc-score { font-family: 'Instrument Serif', serif; font-style: italic; font-size: 84px; line-height: 1; letter-spacing: -0.04em; color: var(--yellow); margin-bottom: 0; }
         .landing-page .hc-score .denom { font-size: 28px; color: rgba(255, 255, 255, 0.5); font-style: normal; }
         .landing-page .hc-score-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255, 255, 255, 0.55); text-transform: uppercase; letter-spacing: 0.12em; margin: 4px 0 18px; }
@@ -2252,7 +2252,7 @@ function Landing({ onStart }) {
         .landing-page .vd-flags h4 { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 11px; color: var(--orange-deep); letter-spacing: 0.14em; margin-bottom: 14px; text-transform: uppercase; }
         .landing-page .vd-flags ul { list-style: none; display: grid; gap: 8px; }
         .landing-page .vd-flags li { font-size: 14px; color: var(--ink); padding-left: 24px; position: relative; line-height: 1.5; }
-        .landing-page .vd-flags li::before { content: '→'; position: absolute; left: 0; color: var(--orange); font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+        .landing-page .vd-flags li::before { content: '?'; position: absolute; left: 0; color: var(--orange); font-family: 'JetBrains Mono', monospace; font-weight: 700; }
         .landing-page .vd-move { display: grid; grid-template-columns: repeat(3, 1fr); border: 1.5px solid var(--line-deep); }
         .landing-page .vd-move-cell { padding: 24px 28px; border-right: 1.5px solid var(--line-deep); background: var(--paper); }
         .landing-page .vd-move-cell:last-child { border-right: none; }
@@ -2294,7 +2294,7 @@ function Landing({ onStart }) {
         .landing-page .proof-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--green); color: var(--paper); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; letter-spacing: 0.02em; }
         .landing-page .proof-name { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
         .landing-page .proof-role { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-faint); margin-top: 2px; letter-spacing: 0.02em; }
-        .landing-page .pricing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 960px; margin: 56px auto 0; }
+        .landing-page .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1200px; margin: 56px auto 0; }
         .landing-page .price-card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-xl); padding: 48px 40px; position: relative; transition: transform 0.2s; }
         .landing-page .price-card.pro { background: var(--ink); color: var(--paper); border-color: var(--ink); box-shadow: 0 40px 80px -30px rgba(216, 90, 46, 0.35); }
         .landing-page .price-card.pro::before { content: 'RECOMMENDED'; position: absolute; top: 24px; right: 32px; background: var(--orange); color: var(--paper); padding: 5px 12px; border-radius: var(--r-sm); font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; font-weight: 700; }
@@ -2307,8 +2307,8 @@ function Landing({ onStart }) {
         .landing-page .price-features { list-style: none; margin-bottom: 32px; }
         .landing-page .price-features li { padding: 11px 0; font-size: 15px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); letter-spacing: -0.005em; }
         .landing-page .price-card.pro .price-features li { border-bottom-color: rgba(255, 255, 255, 0.08); }
-        .landing-page .price-features li::before { content: '✓'; color: var(--mint); font-weight: 700; font-size: 14px; }
-        .landing-page .price-features li.no::before { content: '—'; color: var(--ink-faint); }
+        .landing-page .price-features li::before { content: '?'; color: var(--mint); font-weight: 700; font-size: 14px; }
+        .landing-page .price-features li.no::before { content: '?'; color: var(--ink-faint); }
         .landing-page .price-features li.no { color: var(--ink-faint); }
         .landing-page .price-card .btn { width: 100%; justify-content: center; padding: 16px; border-radius: var(--r); }
         .landing-page .price-card.pro .btn { background: var(--orange); border-color: var(--orange); color: var(--paper); }
@@ -2365,24 +2365,24 @@ function Landing({ onStart }) {
             <a href="#demo">Live demo</a>
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
-            <button className="btn btn-accent" onClick={onStart}>Try Free →</button>
+            <button className="btn btn-accent" onClick={onStart}>Try Free ?</button>
           </div>
           <div className="nav-links nav-cta" style={{ display: "none" }}>
-            <button className="btn btn-accent" onClick={onStart}>Try Free →</button>
+            <button className="btn btn-accent" onClick={onStart}>Try Free ?</button>
           </div>
         </div>
       </nav>
 
       <header className="hero">
         <div className="container">
-          <div className="hero-pill"><span className="dot"></span><span>Live across 12,340 Australian suburbs</span></div>
+          <div className="hero-pill"><span className="dot"></span><span>First report free {"\u00B7"} No card required</span></div>
           <h1 className="hero-headline">Your next investment property,<br /><span className="accent">decided</span> in <span className="underline">30 seconds.</span></h1>
-          <p className="hero-sub">Paste a listing. Get a verdict — <strong>BUY, NEGOTIATE, or SKIP</strong> — with cashflow, yield, red flags, and your walk-away price. Built for rentvestors.</p>
+          <p className="hero-sub">Paste a listing. Get a verdict ? <strong>BUY, HOLD, or SKIP</strong> ? with cashflow, yield, red flags, and your walk-away price. Buy a one-off suburb report in minutes. Built for rentvestors.</p>
           <div className="hero-cta-row">
-            <button className="btn btn-accent btn-lg" onClick={onStart}>Analyse a Property →</button>
+            <button className="btn btn-accent btn-lg" onClick={onStart}>Analyse a Property ?</button>
             <a href="#demo" className="btn btn-ghost btn-lg">See a live example</a>
           </div>
-          <p className="hero-trust">No credit card<span>·</span>3 free verdicts<span>·</span>Cancel anytime</p>
+          <p className="hero-trust">No credit card<span>{"\u00B7"}</span>First report free<span>{"\u00B7"}</span>Cancel anytime</p>
           <div className="hero-card-wrap">
             <div className="hero-card">
               <div className="hero-card-top">
@@ -2392,7 +2392,7 @@ function Landing({ onStart }) {
               <div className="hero-card-body">
                 <div>
                   <div className="hc-address">123 Sample Street, Mackay QLD</div>
-                  <div className="hc-specs">$595,000 · 3 bed · 2 bath · 2 car · 12 days on market</div>
+                  <div className="hc-specs">$595,000 � 3 bed � 2 bath � 2 car � 12 days on market</div>
                   <div className="hc-metric-grid">
                     <div className="hc-metric"><div className="label">Weekly cashflow</div><div className="value pos">+$57</div></div>
                     <div className="hc-metric"><div className="label">Gross yield</div><div className="value">4.5%</div></div>
@@ -2421,27 +2421,27 @@ function Landing({ onStart }) {
 
       <section id="why">
         <div className="container">
-          <div className="section-eyebrow">§ 01 — The positioning</div>
+          <div className="section-eyebrow">� 01 ? The positioning</div>
           <h2 className="section-headline">Built for rentvestors. Not <span className="accent">boomers with buyer&apos;s agents.</span></h2>
           <p className="section-sub">You rent where you want to live and invest where the yields are. That decision deserves better than "this suburb grew 8% last year."</p>
           <div className="why-grid">
             <div className="why-card"><div className="why-num">I.</div><div className="why-title">Speed that matches the market</div><div className="why-body">Good rentvesting opportunities move in days, not months. 30 seconds to a verdict means you act before the other buyer&apos;s agent does.</div></div>
             <div className="why-card"><div className="why-num">II.</div><div className="why-title">Honesty big platforms can&apos;t offer</div><div className="why-body">Domain and realestate.com.au are paid by agents. We&apos;re not. That&apos;s why we&apos;ll tell you when a suburb is already priced out.</div></div>
-            <div className="why-card"><div className="why-num">III.</div><div className="why-title">Built around your strategy</div><div className="why-body">Your borrowing capacity. Your cashflow tolerance. Your 2030 goal. Every verdict is personalised to you — not generic investor advice.</div></div>
+            <div className="why-card"><div className="why-num">III.</div><div className="why-title">Built around your strategy</div><div className="why-body">Your borrowing capacity. Your cashflow tolerance. Your 2030 goal. Every verdict is personalised to you ? not generic investor advice.</div></div>
           </div>
         </div>
       </section>
 
       <section className="demo" id="demo">
         <div className="container">
-          <div className="section-eyebrow">§ 02 — Live verdict</div>
-          <h2 className="section-headline">This is what you get — <span className="accent">every time.</span></h2>
+          <div className="section-eyebrow">� 02 ? Live verdict</div>
+          <h2 className="section-headline">This is what you get ? <span className="accent">every time.</span></h2>
           <p className="section-sub">One property. One page. One decision. No 20-tab research sessions, no spreadsheets, no expensive reports.</p>
           <div className="verdict-doc">
-            <div className="vd-header"><span>ANALYSIS · MKY-QLD-20260418-0832</span><span className="status">LIVE</span></div>
+            <div className="vd-header"><span>ANALYSIS � MKY-QLD-20260418-0832</span><span className="status">LIVE</span></div>
             <div className="vd-body">
               <div className="vd-top">
-                <div><div className="vd-address">123 Sample Street,<br />Mackay QLD 4740</div><div className="vd-specs">$595,000 · 3 bed / 2 bath / 2 car · 12 days on market</div></div>
+                <div><div className="vd-address">123 Sample Street,<br />Mackay QLD 4740</div><div className="vd-specs">$595,000 � 3 bed / 2 bath / 2 car � 12 days on market</div></div>
                 <div className="vd-score-block"><div className="vd-score">7.8<span className="denom">/10</span></div><div className="vd-score-label">Strategy Fit Score</div><div className="vd-badge">NEGOTIATE</div></div>
               </div>
               <div className="vd-metrics">
@@ -2450,7 +2450,7 @@ function Landing({ onStart }) {
                 <div className="vd-metric"><div className="vd-metric-label">12mo growth</div><div className="vd-metric-value pos">+22%</div><div className="vd-metric-sub">vacancy 0.9%</div></div>
                 <div className="vd-metric"><div className="vd-metric-label">Break-even</div><div className="vd-metric-value">4.7%</div><div className="vd-metric-sub">interest rate</div></div>
               </div>
-              <div className="vd-flags"><h4>3 red flags detected</h4><ul><li>Priced 3% above 8 comparable sales (last 90 days)</li><li>Body corp $2,400/yr — eats 9% of gross rent</li><li>Partial flood overlay — check LPI report before offer</li></ul></div>
+              <div className="vd-flags"><h4>3 red flags detected</h4><ul><li>Priced 3% above 8 comparable sales (last 90 days)</li><li>Body corp $2,400/yr ? eats 9% of gross rent</li><li>Partial flood overlay ? check LPI report before offer</li></ul></div>
               <div className="vd-move">
                 <div className="vd-move-cell"><div className="vd-move-label">Walk-away price</div><div className="vd-move-value" style={{ color: "var(--green)" }}>$572k</div></div>
                 <div className="vd-move-cell"><div className="vd-move-label">Opening offer</div><div className="vd-move-value">$555k</div></div>
@@ -2463,33 +2463,33 @@ function Landing({ onStart }) {
 
       <section id="features">
         <div className="container">
-          <div className="section-eyebrow">§ 03 — The system</div>
-          <h2 className="section-headline">Everything a rentvestor checks<br />before making an offer — <span className="accent">automated.</span></h2>
+          <div className="section-eyebrow">� 03 ? The system</div>
+          <h2 className="section-headline">Everything a rentvestor checks<br />before making an offer ? <span className="accent">automated.</span></h2>
           <p className="section-sub">Six pre-offer checks, delivered in one clean view. Nothing else to open.</p>
           <div className="features-grid">
-            <div className="feature"><div className="feature-top"><span className="feature-icon">⚖️</span><span className="feature-code">Ft. 01</span></div><h3>The <span className="serif">Verdict</span></h3><p>BUY, NEGOTIATE, or SKIP — with the reasons. No 20-page report. Just a call you can act on.</p></div>
-            <div className="feature"><div className="feature-top"><span className="feature-icon">💰</span><span className="feature-code">Ft. 02</span></div><h3>Cashflow <span className="serif">Reality</span></h3><p>Weekly +/- at current interest rates. Not the dream numbers agents want you to see.</p></div>
-            <div className="feature"><div className="feature-top"><span className="feature-icon">🚩</span><span className="feature-code">Ft. 03</span></div><h3>Rentvestor <span className="serif">Red Flags</span></h3><p>Flood zones, body corp horrors, oversupply, LMI thresholds, land tax traps — auto-scanned.</p></div>
-            <div className="feature"><div className="feature-top"><span className="feature-icon">📊</span><span className="feature-code">Ft. 04</span></div><h3>Comparable <span className="serif">Sales</span></h3><p>This property vs 8 real recent sales. Walk-away price plus 3 negotiation angles.</p></div>
-            <div className="feature"><div className="feature-top"><span className="feature-icon">🎯</span><span className="feature-code">Ft. 05</span></div><h3>Strategy <span className="serif">Fit Score</span></h3><p>Does this property fit YOUR rentvesting plan? Personalised to capacity, cashflow, goals.</p></div>
-            <div className="feature"><div className="feature-top"><span className="feature-icon">🔥</span><span className="feature-code">Ft. 06</span></div><h3>Daily <span className="serif">Deal Radar</span></h3><p>Top 5 undervalued properties in your target suburbs. One AVOID warning every morning.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 01</span></div><h3>The <span className="serif">Verdict</span></h3><p>BUY, NEGOTIATE, or SKIP ? with the reasons. No 20-page report. Just a call you can act on.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 02</span></div><h3>Cashflow <span className="serif">Reality</span></h3><p>Weekly +/- at current interest rates. Not the dream numbers agents want you to see.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 03</span></div><h3>Rentvestor <span className="serif">Red Flags</span></h3><p>Flood zones, body corp horrors, oversupply, LMI thresholds, land tax traps ? auto-scanned.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 04</span></div><h3>Comparable <span className="serif">Sales</span></h3><p>This property vs 8 real recent sales. Walk-away price plus 3 negotiation angles.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 05</span></div><h3>Strategy <span className="serif">Fit Score</span></h3><p>Does this property fit YOUR rentvesting plan? Personalised to capacity, cashflow, goals.</p></div>
+            <div className="feature"><div className="feature-top"><span className="feature-icon">??</span><span className="feature-code">Ft. 06</span></div><h3>Daily <span className="serif">Deal Radar</span></h3><p>Top 5 undervalued properties in your target suburbs. One AVOID warning every morning.</p></div>
           </div>
         </div>
       </section>
 
       <section className="compare">
         <div className="container">
-          <div className="section-eyebrow">§ 04 — The difference</div>
+          <div className="section-eyebrow">� 04 ? The difference</div>
           <h2 className="section-headline">Why not just use <span className="accent">Domain?</span></h2>
-          <p className="section-sub">The big platforms are great for browsing. Terrible for deciding. Here&apos;s what they won&apos;t tell you — and what we will.</p>
+          <p className="section-sub">The big platforms are great for browsing. Terrible for deciding. Here&apos;s what they won&apos;t tell you ? and what we will.</p>
           <div className="compare-table">
             <div className="compare-head"><div>What you need</div><div className="us">PropAI</div><div>Domain / realestate.com.au</div></div>
-            <div className="compare-row"><div>Tells you if this property is a good deal</div><div className="us">✓</div><div className="them">—</div></div>
-            <div className="compare-row"><div>Flags red flags agents won&apos;t mention</div><div className="us">✓</div><div className="them">—</div></div>
-            <div className="compare-row"><div>Calculates your cashflow at real interest rates</div><div className="us">✓</div><div className="them">—</div></div>
-            <div className="compare-row"><div>Gives you a walk-away price</div><div className="us">✓</div><div className="them">—</div></div>
-            <div className="compare-row"><div>Personalised to your rentvesting strategy</div><div className="us">✓</div><div className="them">—</div></div>
-            <div className="compare-row"><div>Funded by real estate agents</div><div className="us">—</div><div className="them" style={{ color: "var(--yellow)" }}>✓</div></div>
+            <div className="compare-row"><div>Tells you if this property is a good deal</div><div className="us">?</div><div className="them">?</div></div>
+            <div className="compare-row"><div>Flags red flags agents won&apos;t mention</div><div className="us">?</div><div className="them">?</div></div>
+            <div className="compare-row"><div>Calculates your cashflow at real interest rates</div><div className="us">?</div><div className="them">?</div></div>
+            <div className="compare-row"><div>Gives you a walk-away price</div><div className="us">?</div><div className="them">?</div></div>
+            <div className="compare-row"><div>Personalised to your rentvesting strategy</div><div className="us">?</div><div className="them">?</div></div>
+            <div className="compare-row"><div>Funded by real estate agents</div><div className="us">?</div><div className="them" style={{ color: "var(--yellow)" }}>?</div></div>
           </div>
           <div className="compare-cta">We&apos;re not funded by agents. <strong>That&apos;s the whole point.</strong></div>
         </div>
@@ -2497,31 +2497,36 @@ function Landing({ onStart }) {
 
       <section>
         <div className="container">
-          <div className="section-eyebrow">§ 05 — The users</div>
+          <div className="section-eyebrow">� 05 ? The users</div>
           <h2 className="section-headline">Built by rentvestors, <span className="accent">for rentvestors.</span></h2>
           <div className="proof-grid">
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Saved me from a $40k mistake on a flood-zone property in Townsville. Paid for itself on first use.</div><div className="proof-author"><div className="proof-avatar">CH</div><div><div className="proof-name">Cam H.</div><div className="proof-role">RENTVESTOR · SYDNEY</div></div></div></div>
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">I was ready to offer $610k. PropAI said walk away above $578k. Got it at $575k.</div><div className="proof-author"><div className="proof-avatar">SK</div><div><div className="proof-name">Sarah K.</div><div className="proof-role">RENTVESTOR · MELBOURNE</div></div></div></div>
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Finally a tool that speaks rentvestor, not first-home buyer. The red flag scanner alone is worth $49.</div><div className="proof-author"><div className="proof-avatar">JT</div><div><div className="proof-name">James T.</div><div className="proof-role">RENTVESTOR · BRISBANE</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Saved me from a $40k mistake on a flood-zone property in Townsville. Paid for itself on first use.</div><div className="proof-author"><div className="proof-avatar">CH</div><div><div className="proof-name">Cam H.</div><div className="proof-role">RENTVESTOR � SYDNEY</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">I was ready to offer $610k. PropAI said walk away above $578k. Got it at $575k.</div><div className="proof-author"><div className="proof-avatar">SK</div><div><div className="proof-name">Sarah K.</div><div className="proof-role">RENTVESTOR � MELBOURNE</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Finally a tool that speaks rentvestor, not first-home buyer. The red flag scanner alone is worth $49.</div><div className="proof-author"><div className="proof-avatar">JT</div><div><div className="proof-name">James T.</div><div className="proof-role">RENTVESTOR � BRISBANE</div></div></div></div>
           </div>
         </div>
       </section>
 
       <section id="pricing">
         <div className="container" style={{ textAlign: "center" }}>
-          <div className="section-eyebrow" style={{ margin: "0 auto 20px" }}>§ 06 — The pricing</div>
+          <div className="section-eyebrow" style={{ margin: "0 auto 20px" }}>� 06 ? The pricing</div>
           <h2 className="section-headline" style={{ margin: "0 auto 24px" }}>Honest pricing. <span className="accent">No card to start.</span></h2>
-          <p className="section-sub" style={{ margin: "0 auto" }}>Start free. Upgrade when one good deal makes the subscription a rounding error.</p>
+          <p className="section-sub" style={{ margin: "0 auto" }}>Choose one report, a value pack, or unlimited access for active investors.</p>
           <div className="pricing-grid" style={{ textAlign: "left" }}>
             <div className="price-card">
-              <div className="price-tier">Free Forever</div><div className="price-amount">$0</div><div className="price-period">forever · no card needed</div>
-              <ul className="price-features"><li>3 full verdicts</li><li>Strategy fit score</li><li>Red flag scanner</li><li className="no">Daily Deal Radar</li><li className="no">Unlimited analyses</li></ul>
-              <button className="btn btn-ghost" onClick={onStart}>Start Free</button>
+              <div className="price-tier">Single Suburb Report</div><div className="price-amount">$49</div><div className="price-period">one-off</div>
+              <ul className="price-features"><li>1 full PDF report</li><li>All 10 sections</li><li>Walk-away price</li><li>Red flag scanner</li><li>Negotiation playbook</li></ul>
+              <button className="btn btn-ghost" onClick={onStart}>Buy Report</button>
             </div>
             <div className="price-card pro">
-              <div className="price-tier">Pro</div><div className="price-amount">$49</div><div className="price-period">per month · cancel anytime</div>
-              <ul className="price-features"><li>Unlimited verdicts</li><li>Daily Deal Radar</li><li>Strategy fit score</li><li>Red flag scanner</li><li>Negotiation scripts</li><li>Portfolio tracking</li></ul>
-              <button className="btn" onClick={onStart}>Get Pro →</button>
+              <div className="price-tier">3-Report Pack</div><div className="price-amount">$129</div><div className="price-period">one-off (save $18)</div>
+              <ul className="price-features"><li>3 full PDF reports</li><li>Compare suburbs side-by-side</li><li>Save $18</li></ul>
+              <button className="btn" onClick={onStart}>Buy 3-Pack</button>
+            </div>
+            <div className="price-card">
+              <div className="price-tier">Pro Investor</div><div className="price-amount">$79</div><div className="price-period">per month</div>
+              <ul className="price-features"><li>Unlimited reports</li><li>Daily Deal Radar</li><li>Priority support</li></ul>
+              <button className="btn btn-ghost" onClick={onStart}>Go Unlimited</button>
             </div>
           </div>
           <p className="pricing-note">One good deal pays for ten years of Pro.</p>
@@ -2531,8 +2536,8 @@ function Landing({ onStart }) {
       <section className="final" id="final">
         <div className="container">
           <h2>Your next offer shouldn&apos;t be a <span className="accent">guess.</span></h2>
-          <p>Drop a listing URL. Get a verdict in 30 seconds. No signup required for your first one.</p>
-          <button className="btn btn-lg" onClick={onStart}>Analyse a Property Now →</button>
+          <p>Get your first suburb report free. Pay $49 only when you want the full PDF.</p>
+          <button className="btn btn-lg" onClick={onStart}>Analyse a Property Now ?</button>
         </div>
       </section>
 
@@ -2547,40 +2552,40 @@ function Landing({ onStart }) {
             <div className="footer-col"><h5>Company</h5><ul><li><a href="#">About</a></li><li><a href="#">Blog</a></li><li><a href="#">Contact</a></li></ul></div>
             <div className="footer-col"><h5>Legal</h5><ul><li><a href="#">Terms</a></li><li><a href="#">Privacy</a></li><li><a href="#">Disclaimer</a></li></ul></div>
           </div>
-          <div className="footer-bottom"><div>© 2026 PropAI — Australian Property Intelligence</div><div>Not financial advice · Consult a broker + conveyancer</div></div>
+          <div className="footer-bottom"><div>� 2026 PropAI ? Australian Property Intelligence</div><div>Not financial advice � Consult a broker + conveyancer</div></div>
         </div>
       </footer>
     </div>
   );
 }
 
-// ─── PAYWALL ──────────────────────────────────────────────────────────────────
+// ??? PAYWALL ??????????????????????????????????????????????????????????????????
 function Paywall({ used, onUpgrade }) {
   return React.createElement("div", { style:{ background:"#111318", border:"1px solid rgba(232,184,75,0.3)", borderRadius:14, padding:"28px 24px", margin:"20px 0", textAlign:"center" } },
-    React.createElement("div", { style:{ fontSize:28, marginBottom:12 } }, "🔒"),
-    React.createElement("div", { style:{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:18, marginBottom:8 } }, "You've used your 3 free analyses"),
+    React.createElement("div", { style:{ fontSize:28, marginBottom:12 } }, "??"),
+    React.createElement("div", { style:{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:18, marginBottom:8 } }, "You've used your 3 free verdicts."),
     React.createElement("div", { style:{ color:"#6b7280", fontSize:13, marginBottom:20, lineHeight:1.6 } },
-      "Upgrade to Pro to unlock unlimited deal analysis,", React.createElement("br"),
-      "daily deal feed, negotiation strategies and more."
+      "Unlock the full PDF report - every red flag, walk-away price,", React.createElement("br"),
+      "and negotiation angle for your suburb."
     ),
     React.createElement("div", { style:{ background:"#181c24", borderRadius:10, padding:"16px 20px", marginBottom:20, textAlign:"left" } },
-      ...["✓ Unlimited suburb + deal analysis", "✓ Daily Deal of the Day", "✓ Undervalued detection", "✓ Full negotiation strategy", "✓ Investor Edge insights"].map((f,i) =>
+      ...["? Full PDF report with all 10 sections", "? Walk-away price range you can act on", "? Red flag scan with risk breakdown", "? Negotiation playbook with offer angles", "? Clear verdict backed by live market data"].map((f,i) =>
         React.createElement("div", { key:i, style:{ fontSize:12, color:"#e8e6e0", marginBottom:6 } }, f)
       )
     ),
-    React.createElement("button", { onClick:onUpgrade, style:{ width:"100%", padding:14, borderRadius:10, border:"none", background:"#e8b84b", color:"#000", fontFamily:"monospace", fontSize:14, fontWeight:700, cursor:"pointer", marginBottom:10 } }, "Upgrade to Pro — $49/month →"),
-    React.createElement("div", { style:{ fontSize:11, color:"#4b5563" } }, "Cancel anytime • Instant access")
+    React.createElement("button", { onClick:onUpgrade, style:{ width:"100%", padding:14, borderRadius:10, border:"none", background:"#e8b84b", color:"#000", fontFamily:"monospace", fontSize:14, fontWeight:700, cursor:"pointer", marginBottom:10 } }, "Buy Full Report - $49"),
+    React.createElement("div", { style:{ fontSize:11, color:"#4b5563" } }, "or go unlimited for $79/mo \u2192")
   );
 }
 
-// ─── MAIN DASHBOARD ───────────────────────────────────────────────────────────
+// ??? MAIN DASHBOARD ???????????????????????????????????????????????????????????
 export default function App() {
   const [screen, setScreen] = useState("landing"); // landing | app
   const [isPro, setIsPro] = useState(false);
   const [usageCount, setUsageCount] = useState(0);
   const [msgs, setMsgs] = useState([{
     role:"assistant",
-    text:"G'day! I'm PropAI — your elite AI buyer's agent. 🏡\n\n**Three modes:**\n\n**🔥 DAILY DEALS** — Today's top scored opportunities\n**🏡 SUBURB MODE** — Full score breakdown + BUY/WATCH/AVOID\n**🏠 DEAL MODE** — Paste any property for undervalued detection + negotiation strategy\n\n**Every analysis includes:**\n- Deal Score /100 with transparent breakdown\n- Cashflow snapshot at 20% deposit\n- Undervalued detection vs comparable sales\n- Negotiation strategy with target price\n- Investor Edge — what smart money sees\n- Final Call — decisive, personal, actionable\n\n**What is your budget and target area?**"
+    text:"G'day! I'm PropAI ? your elite AI buyer's agent. ??\n\n**Three modes:**\n\n**?? DAILY DEALS** ? Today's top scored opportunities\n**?? SUBURB MODE** ? Full score breakdown + BUY/WATCH/AVOID\n**?? DEAL MODE** ? Paste any property for undervalued detection + negotiation strategy\n\n**Every analysis includes:**\n- Deal Score /100 with transparent breakdown\n- Cashflow snapshot at 20% deposit\n- Undervalued detection vs comparable sales\n- Negotiation strategy with target price\n- Investor Edge ? what smart money sees\n- Final Call ? decisive, personal, actionable\n\n**What is your budget and target area?**"
   }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2616,12 +2621,12 @@ export default function App() {
       });
 
       if (!res.ok) {
-        let errMsg = "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
+        let errMsg = "?? Something went wrong pulling live data. Try again in 10?20 seconds.";
         try {
           const ct = res.headers.get("content-type") || "";
           if (ct.includes("application/json")) {
             const j = await res.json();
-            if (j?.error) errMsg = typeof j.error === "string" ? `⚠️ ${j.error}` : errMsg;
+            if (j?.error) errMsg = typeof j.error === "string" ? `?? ${j.error}` : errMsg;
           }
         } catch { /* ignore */ }
         setSearching(false);
@@ -2638,7 +2643,7 @@ export default function App() {
         setSearching(false);
         setMsgs(p => {
           const n = [...p];
-          n[n.length - 1] = { role:"assistant", text: "⚠️ No response stream." };
+          n[n.length - 1] = { role:"assistant", text: "?? No response stream." };
           return n;
         });
         setBusy(false);
@@ -2664,7 +2669,7 @@ export default function App() {
         if (obj.error) {
           streamHalt = true;
           ndjsonError = true;
-          streamedContent = obj.message || "⚠️ Error.";
+          streamedContent = obj.message || "?? Error.";
           setSearching(false);
           setMsgs(p => {
             const n = [...p];
@@ -2742,7 +2747,7 @@ export default function App() {
       }
     } catch (e) {
       setSearching(false);
-      const errMsg = "⚠️ Something went wrong pulling live data. Try again in 10–20 seconds.";
+      const errMsg = "?? Something went wrong pulling live data. Try again in 10?20 seconds.";
       setMsgs(p => {
         const n = [...p];
         const last = n[n.length - 1];
@@ -2756,11 +2761,11 @@ export default function App() {
   }
 
   const quickBtns = [
-    { label:"🔥 Today's top deals", prompt:"Show me today's top deals under $650k in QLD ranked by deal score" },
-    { label:"🏡 Score a suburb", prompt:"Score Geraldton WA as an investment — BUY or AVOID?" },
-    { label:"⚖️ Compare suburbs", prompt:"Compare Kirwan vs Aitkenvale QLD" },
-    { label:"💰 Analyse a deal", prompt:"3 bed house Mackay QLD $585,000 rent $600 per week — is this undervalued? Run full deal analysis." },
-    { label:"📡 Opportunity Radar", prompt:"Run the opportunity radar for under $600k across QLD and WA — rank by deal score" },
+    { label:"?? Today's top deals", prompt:"Show me today's top deals under $650k in QLD ranked by deal score" },
+    { label:"?? Score a suburb", prompt:"Score Geraldton WA as an investment ? BUY or AVOID?" },
+    { label:"?? Compare suburbs", prompt:"Compare Kirwan vs Aitkenvale QLD" },
+    { label:"?? Analyse a deal", prompt:"3 bed house Mackay QLD $585,000 rent $600 per week ? is this undervalued? Run full deal analysis." },
+    { label:"?? Opportunity Radar", prompt:"Run the opportunity radar for under $600k across QLD and WA ? rank by deal score" },
   ];
 
   const remaining = FREE_LIMIT - usageCount;
@@ -2815,14 +2820,14 @@ export default function App() {
           React.createElement("div", { style:{ width:28, height:28, background:"#e8b84b", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:12, color:"#000" } }, "P"),
           React.createElement("div", { style:{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:15 } }, "PropAI")
         ),
-        React.createElement("div", { style:{ fontSize:9, color:"#4ade80", background:"rgba(74,222,128,0.1)", border:"1px solid rgba(74,222,128,0.2)", borderRadius:20, padding:"2px 10px" } }, "🔍 LIVE"),
+        React.createElement("div", { style:{ fontSize:9, color:"#4ade80", background:"rgba(74,222,128,0.1)", border:"1px solid rgba(74,222,128,0.2)", borderRadius:20, padding:"2px 10px" } }, "?? LIVE"),
         React.createElement("div", { style:{ marginLeft:"auto", display:"flex", alignItems:"center", gap:12 } },
           !isPro && React.createElement("div", { style:{ fontSize:11, color: remaining <= 1 ? "#f87171" : "#6b7280" } },
-            remaining > 0 ? `${remaining} free ${remaining===1?"analysis":"analyses"} left — then unlock unlimited` : "Free limit reached"
+            remaining > 0 ? `${remaining} free ${remaining===1?"analysis":"analyses"} left ? then unlock unlimited` : "Free limit reached"
           ),
-          !isPro && React.createElement("button", { onClick:handleUpgrade, style:{ fontSize:11, background:"#e8b84b", color:"#000", border:"none", borderRadius:8, padding:"5px 14px", cursor:"pointer", fontFamily:"monospace", fontWeight:700 } }, "Upgrade $49/mo"),
-          isPro && React.createElement("div", { style:{ fontSize:10, color:"#4ade80", background:"rgba(74,222,128,0.1)", border:"1px solid rgba(74,222,128,0.2)", borderRadius:20, padding:"3px 10px" } }, "⭐ PRO"),
-          React.createElement("button", { onClick:()=>setScreen("landing"), style:{ fontSize:10, color:"#4b5563", background:"none", border:"none", cursor:"pointer" } }, "← Home")
+          !isPro && React.createElement("button", { onClick:handleUpgrade, style:{ fontSize:11, background:"#e8b84b", color:"#000", border:"none", borderRadius:8, padding:"5px 14px", cursor:"pointer", fontFamily:"monospace", fontWeight:700 } }, "Buy Full Report $49"),
+          isPro && React.createElement("div", { style:{ fontSize:10, color:"#4ade80", background:"rgba(74,222,128,0.1)", border:"1px solid rgba(74,222,128,0.2)", borderRadius:20, padding:"3px 10px" } }, "? PRO"),
+          React.createElement("button", { onClick:()=>setScreen("landing"), style:{ fontSize:10, color:"#4b5563", background:"none", border:"none", cursor:"pointer" } }, "? Home")
         )
       ),
 
@@ -2834,12 +2839,12 @@ export default function App() {
         React.createElement("div", { style:{ margin:"16px 0 8px", height:"1px", background:"rgba(255,255,255,0.06)" } }),
         React.createElement("div", { style:{ fontSize:9, letterSpacing:"0.15em", textTransform:"uppercase", color:"#4b5563", padding:"4px 8px 10px" } }, "How To Use"),
         ...["Type any suburb name + state", "Paste property: suburb, price, rent", "Ask for today's deals", "Compare: Kirwan vs Aitkenvale QLD"].map((tip,i) =>
-          React.createElement("div", { key:i, style:{ padding:"7px 10px", fontSize:10, color:"#4b5563", lineHeight:1.5 } }, `• ${tip}`)
+          React.createElement("div", { key:i, style:{ padding:"7px 10px", fontSize:10, color:"#4b5563", lineHeight:1.5 } }, `? ${tip}`)
         ),
 
         React.createElement("div", { style:{ marginTop:"auto", padding:"14px 10px 0" } },
           React.createElement("div", { style:{ background:"#181c24", borderRadius:10, padding:"12px 14px", fontSize:11 } },
-            React.createElement("div", { style:{ color:"#6b7280", marginBottom:4 } }, "⚠️ Disclaimer"),
+            React.createElement("div", { style:{ color:"#6b7280", marginBottom:4 } }, "?? Disclaimer"),
             React.createElement("div", { style:{ color:"#4b5563", lineHeight:1.6, fontSize:10 } }, "Not financial advice. Always consult a mortgage broker and conveyancer before purchasing.")
           )
         )
@@ -2858,12 +2863,12 @@ export default function App() {
             const compareParsed = m.role === "assistant" ? parsePropaiCompareBlock(m.text) : null;
             const compareLayout = m.role === "assistant" && (!!m.compareMeta || !!compareParsed);
             return React.createElement("div", { key:i, style:{ display:"flex", gap:10, flexDirection:m.role==="user"?"row-reverse":"row", alignSelf:m.role==="user"?"flex-end":"stretch", width:m.role==="assistant"?"100%":undefined, maxWidth:m.role==="user"?"min(520px, 88%)":"min(800px, 100%)", animation:"fu 0.3s ease both" } },
-            React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0, background:m.role==="assistant"?"rgba(232,184,75,0.1)":"#181c24", border:`1px solid ${m.role==="assistant"?"rgba(232,184,75,0.25)":"rgba(255,255,255,0.06)"}` } }, m.role==="assistant"?"🏡":"👤"),
+            React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0, background:m.role==="assistant"?"rgba(232,184,75,0.1)":"#181c24", border:`1px solid ${m.role==="assistant"?"rgba(232,184,75,0.25)":"rgba(255,255,255,0.06)"}` } }, m.role==="assistant"?"??":"??"),
             React.createElement("div", { style:{ flex:m.role==="assistant"?1:undefined, minWidth:0, padding: compareLayout ? "14px 16px" : "12px 16px", borderRadius:12, fontSize:13, lineHeight:1.75, background:m.role==="assistant"?"#0e1117":"#e8b84b", color:m.role==="assistant"?"#e8e6e0":"#080a0e", border:m.role==="assistant"?"1px solid rgba(255,255,255,0.06)":"none", borderTopLeftRadius:m.role==="assistant"?3:12, borderTopRightRadius:m.role==="user"?3:12 } },
               lastAssistantSearching
                 ? React.createElement(React.Fragment, null,
-                    React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "🔍"),
-                    React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite", marginLeft:8 } }, msgs.at(-1)?.compareMeta ? "Comparing suburbs (2 live searches)…" : "Searching live data...")
+                    React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "??"),
+                    React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite", marginLeft:8 } }, msgs.at(-1)?.compareMeta ? "Comparing suburbs (2 live searches)?" : "Searching live data...")
                   )
                 : m.role === "assistant"
                   ? renderAssistantContent(m)
@@ -2872,11 +2877,11 @@ export default function App() {
             );
           }),
           busy && msgs.at(-1)?.role !== "assistant" && React.createElement("div", { style:{ display:"flex", gap:10, alignSelf:"flex-start", animation:"fu 0.3s ease both" } },
-            React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, background:"rgba(232,184,75,0.1)", border:"1px solid rgba(232,184,75,0.25)" } }, "🏡"),
+            React.createElement("div", { style:{ width:30, height:30, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, background:"rgba(232,184,75,0.1)", border:"1px solid rgba(232,184,75,0.25)" } }, "??"),
             React.createElement("div", { style:{ padding:"12px 16px", borderRadius:12, borderTopLeftRadius:3, background:"#0e1117", border:"1px solid rgba(255,255,255,0.06)", display:"flex", alignItems:"center", gap:8 } },
               searching
                 ? React.createElement(React.Fragment, null,
-                    React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "🔍"),
+                    React.createElement("span", { style:{ animation:"pulse 1.2s infinite", color:"#4ade80" } }, "??"),
                     React.createElement("span", { style:{ fontSize:11, color:"#4ade80", animation:"pulse 1.2s infinite" } }, "Searching live data...")
                   )
                 : [0,0.2,0.4].map((d,i)=>React.createElement("span",{key:i,style:{display:"inline-block",width:6,height:6,borderRadius:"50%",background:"#e8b84b",animation:`bounce 1.2s ease-in-out ${d}s infinite`}}))
@@ -2905,7 +2910,7 @@ export default function App() {
               cursor:"pointer",
               transition:"background 0.15s"
             }
-          }, "⬇ Download PDF Report")
+          }, "? Download PDF Report")
         ),
 
         showMortgageCalc &&
@@ -2917,13 +2922,13 @@ export default function App() {
         // Input area
         React.createElement("div", { style:{ borderTop:"1px solid rgba(255,255,255,0.06)", padding:"14px 28px", background:"#0e1117", display:"flex", flexDirection:"column", gap:10 } },
           !showPaywall && React.createElement("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
-            ...["🔥 Today's top deals QLD", "Score Geraldton WA", "Mackay $585k $600pw deal?", "WA Opportunity Radar"].map((s,i) =>
+            ...["?? Today's top deals QLD", "Score Geraldton WA", "Mackay $585k $600pw deal?", "WA Opportunity Radar"].map((s,i) =>
               React.createElement("button", { key:i, className:"qb", onClick:()=>{ if(!busy && (isPro || usageCount < FREE_LIMIT)) sendMsg(s); }, style:{ fontSize:10, padding:"3px 10px", borderRadius:20, border:"1px solid rgba(255,255,255,0.1)", background:"transparent", color:"#4b5563", cursor:"pointer", transition:"all 0.15s", fontFamily:"monospace" } }, s)
             )
           ),
           React.createElement("div", { style:{ display:"flex", gap:10, alignItems:"flex-end" } },
-            React.createElement("textarea", { ref:inputRef, value:input, onChange:e=>setInput(e.target.value), onKeyDown:e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}, placeholder: showPaywall ? "Upgrade to Pro to continue..." : "Ask about any suburb, or paste a property — suburb, price, rent...", disabled:showPaywall||busy, rows:1, style:{ flex:1, background:showPaywall?"#0e1117":"#181c24", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"10px 14px", color:"#e8e6e0", fontFamily:"'IBM Plex Mono',monospace", fontSize:13, resize:"none", lineHeight:1.5, opacity:showPaywall?0.4:1 } }),
-            React.createElement("button", { onClick:()=>sendMsg(), disabled:busy||!input.trim()||showPaywall, style:{ width:42, height:42, borderRadius:10, border:"none", background:busy||!input.trim()||showPaywall?"rgba(232,184,75,0.25)":"#e8b84b", color:"#000", cursor:busy||!input.trim()||showPaywall?"not-allowed":"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 } }, "↑")
+            React.createElement("textarea", { ref:inputRef, value:input, onChange:e=>setInput(e.target.value), onKeyDown:e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}, placeholder: showPaywall ? "Upgrade to Pro to continue..." : "Ask about any suburb, or paste a property ? suburb, price, rent...", disabled:showPaywall||busy, rows:1, style:{ flex:1, background:showPaywall?"#0e1117":"#181c24", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"10px 14px", color:"#e8e6e0", fontFamily:"'IBM Plex Mono',monospace", fontSize:13, resize:"none", lineHeight:1.5, opacity:showPaywall?0.4:1 } }),
+            React.createElement("button", { onClick:()=>sendMsg(), disabled:busy||!input.trim()||showPaywall, style:{ width:42, height:42, borderRadius:10, border:"none", background:busy||!input.trim()||showPaywall?"rgba(232,184,75,0.25)":"#e8b84b", color:"#000", cursor:busy||!input.trim()||showPaywall?"not-allowed":"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 } }, "?")
           )
         )
       )
