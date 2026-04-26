@@ -194,7 +194,7 @@ function buildCompareDataFromText(text, title) {
     const growthMatch = text.match(growthRe);
 
     const verdictRe = new RegExp(
-      `${esc}[^\\.\\n]{0,80}?\\b(BUY|HOLD|SKIP|NEGOTIATE)\\b`,
+      `${esc}[^\\.\\n]{0,80}?\\b(BUY|HOLD|SKIP)\\b`,
       "i"
     );
     const verdictMatch = text.match(verdictRe);
@@ -252,7 +252,7 @@ function parseNamedScore(text, suburbName) {
 function parseNamedVerdict(text, suburbName) {
   if (!text || !suburbName) return null;
   const esc = suburbName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = String(text).match(new RegExp(`${esc}\\s*:\\s*(BUY|HOLD|SKIP|NEGOTIATE)`, "i"));
+  const m = String(text).match(new RegExp(`${esc}\\s*:\\s*(BUY|HOLD|SKIP)`, "i"));
   return m ? m[1].toUpperCase() : null;
 }
 
@@ -327,7 +327,7 @@ function normalizeCompareWinner(data) {
 function verdictBadgeStyles(verdict) {
   const v = String(verdict || "").toUpperCase();
   if (v === "BUY") return { bg: "#dcfce7", fg: "#166534", label: "BUY" };
-  if (v === "NEGOTIATE" || v === "WATCH") return { bg: "#ffedd5", fg: "#c2410c", label: v === "WATCH" ? "WATCH" : "NEGOTIATE" };
+  if (v === "WATCH") return { bg: "#ffedd5", fg: "#c2410c", label: "WATCH" };
   if (v === "SKIP" || v === "AVOID") return { bg: "#fee2e2", fg: "#b91c1c", label: v === "AVOID" ? "AVOID" : "SKIP" };
   return { bg: "#f3f4f6", fg: "#374151", label: verdict || "—" };
 }
@@ -870,17 +870,17 @@ function parsePropaiScore(text) {
 
 function parsePropaiVerdict(text) {
   if (!text) return null;
-  let m = text.match(/\[\[PROPAI_VERDICT\]\]\s*(BUY|HOLD|SKIP|NEGOTIATE)/i);
+  let m = text.match(/\[\[PROPAI_VERDICT\]\]\s*(BUY|HOLD|SKIP)/i);
   if (m) return m[1].toUpperCase();
   const finalCall = text.match(/##\s*FINAL CALL\s*([\s\S]*?)(?=##\s|\[\[|$)/i);
   if (finalCall) {
-    const v = finalCall[1].match(/\b(BUY|HOLD|SKIP|NEGOTIATE)\b/i);
+    const v = finalCall[1].match(/\b(BUY|HOLD|SKIP)\b/i);
     if (v) return v[1].toUpperCase();
   }
-  m = text.match(/verdict[:\s]+(BUY|HOLD|SKIP|NEGOTIATE)/i);
+  m = text.match(/verdict[:\s]+(BUY|HOLD|SKIP)/i);
   if (m) return m[1].toUpperCase();
   const firstChunk = text.slice(0, 2000);
-  m = firstChunk.match(/\b(BUY|HOLD|SKIP|NEGOTIATE)\b/);
+  m = firstChunk.match(/\b(BUY|HOLD|SKIP)\b/);
   if (m) return m[1].toUpperCase();
   return null;
 }
@@ -1139,7 +1139,7 @@ function buildBrandedPdf(analysisText, options = {}) {
       ? FOREST
       : verdict === "SKIP"
         ? CRIMSON
-        : verdict === "HOLD" || verdict === "NEGOTIATE"
+        : verdict === "HOLD"
           ? AMBER
           : INK_MUTED;
   const refBase = compareMeta ? String(compareMeta.suburb1 || "SUB") : suburbName;
@@ -1184,7 +1184,7 @@ function buildBrandedPdf(analysisText, options = {}) {
         .find(Boolean);
       if (firstLine) return firstLine;
     }
-    if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP" || verdict === "NEGOTIATE") {
+    if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP") {
       return `${verdict} — data-backed recommendation based on current parsed metrics and risk profile.`;
     }
     return "Data unavailable";
