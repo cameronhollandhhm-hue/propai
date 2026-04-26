@@ -90,6 +90,20 @@ function normalizeComparePayload(data) {
   const o = { ...data };
   if (!o.suburb1 && o.Suburb1) o.suburb1 = o.Suburb1;
   if (!o.suburb2 && o.Suburb2) o.suburb2 = o.Suburb2;
+  if (!o.suburb1 && o.suburbA) o.suburb1 = o.suburbA;
+  if (!o.suburb2 && o.suburbB) o.suburb2 = o.suburbB;
+  if (o.suburb1 && typeof o.suburb1 === "object") {
+    if (o.suburb1.Score != null && o.suburb1.score == null) o.suburb1.score = o.suburb1.Score;
+    if (o.suburb1.Yield != null && o.suburb1.yield == null) o.suburb1.yield = o.suburb1.Yield;
+    if (o.suburb1.Growth != null && o.suburb1.growth == null) o.suburb1.growth = o.suburb1.Growth;
+    if (o.suburb1.Verdict != null && o.suburb1.verdict == null) o.suburb1.verdict = o.suburb1.Verdict;
+  }
+  if (o.suburb2 && typeof o.suburb2 === "object") {
+    if (o.suburb2.Score != null && o.suburb2.score == null) o.suburb2.score = o.suburb2.Score;
+    if (o.suburb2.Yield != null && o.suburb2.yield == null) o.suburb2.yield = o.suburb2.Yield;
+    if (o.suburb2.Growth != null && o.suburb2.growth == null) o.suburb2.growth = o.suburb2.Growth;
+    if (o.suburb2.Verdict != null && o.suburb2.verdict == null) o.suburb2.verdict = o.suburb2.Verdict;
+  }
   return o;
 }
 
@@ -171,6 +185,23 @@ function parseReportCompareTitle(title) {
   return { suburb1: vsMatch[1].trim(), suburb2: vsMatch[2].trim() };
 }
 
+function parseMetricValueForSuburb(sectionText, suburbName, metricHints = []) {
+  const src = String(sectionText || "");
+  if (!src || !suburbName) return null;
+  const esc = suburbName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lines = src.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!new RegExp(`\\b${esc}\\b`, "i").test(line)) continue;
+    if (!metricHints.length || metricHints.some((h) => new RegExp(h, "i").test(line))) {
+      const pct = line.match(/(\d+(?:\.\d+)?%)/);
+      if (pct) return pct[1];
+      const money = line.match(/\$[\d,]+(?:\.\d+)?[Kk]?/);
+      if (money) return money[0];
+    }
+  }
+  return null;
+}
+
 function buildCompareDataFromText(text, title) {
   if (!text || !title) return null;
   const names = parseReportCompareTitle(title);
@@ -181,10 +212,10 @@ function buildCompareDataFromText(text, title) {
 
   function extractForSuburb(name) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const scoreRe = new RegExp(`${esc}[^\\d]{0,40}(\\d{1,3})\\s*\\/\\s*100`, "i");
+    const scoreRe = new RegExp(`${esc}[^\\d]{0,80}(\\d{1,3})\\s*\\/\\s*100`, "i");
     const scoreMatch = text.match(scoreRe);
 
-    const yieldRe = new RegExp(`${esc}[^\\.\\n]{0,80}?(\\d+(?:\\.\\d+)?%)`, "i");
+    const yieldRe = new RegExp(`(?:${esc}[^\\.\\n]{0,80}?yield|yield[^\\.\\n]{0,80}?${esc})[^\\.\\n]{0,60}?(\\d+(?:\\.\\d+)?%)`, "i");
     const yieldMatch = text.match(yieldRe);
 
     const growthRe = new RegExp(
@@ -199,11 +230,15 @@ function buildCompareDataFromText(text, title) {
     );
     const verdictMatch = text.match(verdictRe);
 
+    const metricsSection = text.match(/##\s*METRICS SNAPSHOT\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i)?.[1] || "";
+    const sectionYield = parseMetricValueForSuburb(metricsSection, name, ["yield"]);
+    const sectionGrowth = parseMetricValueForSuburb(metricsSection, name, ["growth", "capital"]);
+
     return {
       name,
       score: scoreMatch ? scoreMatch[1] : null,
-      yield: yieldMatch ? yieldMatch[1] : null,
-      growth: growthMatch ? growthMatch[1] : null,
+      yield: (yieldMatch ? yieldMatch[1] : null) || sectionYield,
+      growth: (growthMatch ? growthMatch[1] : null) || sectionGrowth,
       verdict: verdictMatch ? verdictMatch[1].toUpperCase() : null
     };
   }
@@ -999,8 +1034,20 @@ function extractSuburbName(analysisText, userPrompt) {
     }
   }
 
-  const promptMatch = userPrompt?.match(/\b([A-Z][a-z]+)\s+(QLD|NSW|VIC|WA|SA|TAS|ACT|NT)\b/);
-  if (promptMatch && !/^report$/i.test(promptMatch[1])) return promptMatch[1];
+  const cleanedPrompt = String(userPrompt || "")
+    .replace(/\b(analysis|report|intelligence|review|suburb|score|property)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const promptMatch = cleanedPrompt.match(/\b([A-Za-z][A-Za-z\s'-]{1,40})\s+(QLD|NSW|VIC|WA|SA|TAS|ACT|NT)\b/i);
+  if (promptMatch) {
+    const candidate = promptMatch[1].trim();
+    if (candidate && !/^report$/i.test(candidate)) {
+      return candidate
+        .split(/\s+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+    }
+  }
 
   return "Property";
 }
@@ -1176,6 +1223,7 @@ function buildBrandedPdf(analysisText, options = {}) {
   const flagItems = parsePropaiBearCase(analysisText);
 
   const finalCallSection = src.match(/##\s*FINAL CALL\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
+  const finalCallLineFallback = src.match(/(?:^|\n)\s*(BUY|HOLD|SKIP)\b[^\n]{12,220}/i);
   const finalCallText = (() => {
     if (finalCallSection?.[1]) {
       const firstLine = finalCallSection[1]
@@ -1183,6 +1231,15 @@ function buildBrandedPdf(analysisText, options = {}) {
         .map((l) => clean(l))
         .find(Boolean);
       if (firstLine) return firstLine;
+    }
+    if (finalCallLineFallback) return clean(finalCallLineFallback[0]);
+    if (compareMeta && compareBlockParsed?.data?.winner?.reason) {
+      const winnerName = clean(String(compareBlockParsed.data.winner.name || ""));
+      const reason = clean(String(compareBlockParsed.data.winner.reason || ""));
+      if (reason) {
+        const lead = verdict === "Data unavailable" ? "HOLD" : verdict;
+        return `${lead} — ${winnerName ? `${winnerName} edges this setup because ` : ""}${reason}`;
+      }
     }
     if (verdict === "BUY" || verdict === "HOLD" || verdict === "SKIP") {
       return `${verdict} — data-backed recommendation based on current parsed metrics and risk profile.`;
@@ -1243,6 +1300,8 @@ function buildBrandedPdf(analysisText, options = {}) {
     if (v == null || v === "") return "Data unavailable";
     if (typeof v === "number") return `${v}/100`;
     const s = String(v).trim();
+    const embedded = s.match(/(\d{1,3})\s*\/\s*100/i);
+    if (embedded) return `${embedded[1]}/100`;
     if (/^\d{1,3}$/.test(s)) return `${s}/100`;
     return s;
   };
