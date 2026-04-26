@@ -268,7 +268,10 @@ function parsePropaiCompareBlock(text) {
       const tail = raw.slice(from);
       const endM = tail.match(/\[\[?\s*\/\s*PROPAI_COMPARE\s*\]?\]/i);
       const inner = endM ? tail.slice(0, endM.index) : tail;
+      const rawJsonString = String(inner || "").trim();
+      console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
       const data = tryParseCompareJsonBlob(inner);
+      console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
       if (data?.suburb1 && data?.suburb2) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
@@ -277,7 +280,10 @@ function parsePropaiCompareBlock(text) {
       /```(?:json)?\s*(\{[\s\S]*?"suburb1"[\s\S]*?\})\s*```/i
     );
     if (fenced) {
+      const rawJsonString = String(fenced[1] || "").trim();
+      console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
       const data = tryParseCompareJsonBlob(fenced[1]);
+      console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
       if (data?.suburb1 && data?.suburb2) {
         return { data, prose: stripPropaiCompareBlock(raw) };
       }
@@ -288,7 +294,10 @@ function parsePropaiCompareBlock(text) {
     logCompareParseInfoOnce("Failed to parse compare JSON from fallback paths", raw);
     return null;
   }
+  const rawJsonString = String(m[1] || "").trim();
+  console.log("[DEBUG] Raw COMPARE block:", rawJsonString);
   const data = tryParseCompareJsonBlob(m[1]);
+  console.log("[DEBUG] Parsed COMPARE object:", JSON.stringify(data, null, 2));
   if (!data?.suburb1 || !data?.suburb2) {
     logCompareParseInfoOnce("Found marker but failed JSON parse", raw);
     const looseB = tryParseLooseCompareBlock(raw);
@@ -1614,6 +1623,10 @@ function buildBrandedPdf(analysisText, options = {}) {
     const data = effectiveCompareData;
     const s1 = data?.suburb1;
     const s2 = data?.suburb2;
+    console.log("[DEBUG] suburb1.score:", s1?.score, "type:", typeof s1?.score);
+    console.log("[DEBUG] suburb1 keys:", Object.keys(s1 || {}));
+    console.log("[DEBUG] suburb2.score:", s2?.score, "type:", typeof s2?.score);
+    console.log("[DEBUG] suburb2 keys:", Object.keys(s2 || {}));
     const valueOrUnavailable = (v) => {
       if (v == null) return "Data unavailable";
       const s = String(v).trim();
