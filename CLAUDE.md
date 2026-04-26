@@ -83,7 +83,7 @@ The AI must emit these markers in every analysis. Parsers in App.jsx depend on t
 
 - `[[PROPAI_SCORE]] N/100` — deal score
 - `[[PROPAI_WALKAWAY]] $Xk - $Yk` — walk-away price range
-- `[[PROPAI_VERDICT]] BUY` | `HOLD` | `SKIP` | `NEGOTIATE`
+- `[[PROPAI_VERDICT]] BUY` | `HOLD` | `SKIP` (uppercase only — parser regex in `parsePropaiVerdict` matches exactly these three)
 - `[[PROPAI_COMPARE]] {json}` — NDJSON compare payload with `suburb1` and `suburb2` keys (NOT suburbA/suburbB)
 - `[[BULL_START]] ... [[BULL_END]]` — bull case body
 - `[[BEAR_START]] ... [[BEAR_END]]` — bear case / red flags body
