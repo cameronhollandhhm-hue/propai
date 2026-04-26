@@ -1230,6 +1230,7 @@ function buildBrandedPdf(analysisText, options = {}) {
 
   const workingItems = parsePropaiBullCase(analysisText);
   const flagItems = parsePropaiBearCase(analysisText);
+  const compareBlockParsed = parsePropaiCompareBlock(analysisText);
 
   const finalCallSection = src.match(/##\s*FINAL CALL\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i);
   const finalCallLineFallback = src.match(/(?:^|\n)\s*(BUY|HOLD|SKIP)\b[^\n]{12,220}/i);
@@ -1256,7 +1257,6 @@ function buildBrandedPdf(analysisText, options = {}) {
     return "Data unavailable";
   })();
 
-  const compareBlockParsed = parsePropaiCompareBlock(analysisText);
   const reportTitle = compareMeta
     ? `${compareMeta.suburb1} vs ${compareMeta.suburb2} ${compareMeta.state || ""}`.trim()
     : suburbName;
