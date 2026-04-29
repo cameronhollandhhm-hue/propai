@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { jsPDF } from "jspdf";
+import { buildBrandedPdf as buildPdfReport } from "./pdfReport";
 
 // ??? MEGA SYSTEM PROMPT ???????????????????????????????????????????????????????
 const SYSTEM = `You are PropAI ? an elite Australian property investment analyst. Search the web for live data before every answer.
@@ -1141,7 +1142,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_MUTED);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.text("PROPAI  ù  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
+    doc.text("PROPAI  ?  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
     doc.setFont("times", "italic");
     doc.setFontSize(9);
     doc.text(String(pageRoman), PW - MX, PH - 12, { align: "right" });
@@ -1332,7 +1333,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     const rightX = PW - MX;
     doc.text("CONFIDENTIAL REPORT", rightX, 20, { align: "right", charSpace: 0.6 });
     doc.text(today.toUpperCase(), rightX, 24, { align: "right", charSpace: 0.6 });
-    doc.text(`REF ù ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
+    doc.text(`REF ? ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
     drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
     const titleStr = compareMeta
       ? `${compareMeta.suburb1} vs ${compareMeta.suburb2},`
@@ -1386,7 +1387,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(CREAM);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.text(`VERDICT  ù  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
+    doc.text(`VERDICT  ?  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
   };
 
   const drawExecSummary = () => {
@@ -1643,7 +1644,7 @@ function buildBrandedPdf(analysisText, options = {}) {
     setText(PAPER);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("FINAL CALL  ù  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
+    doc.text("FINAL CALL  ?  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
     doc.setFont("times", "normal");
     doc.setFontSize(17);
     const fcLines = doc.splitTextToSize(finalCallText.substring(0, 140), PW - 2 * MX - 20);
@@ -2203,7 +2204,7 @@ function Landing({ onStart }) {
         .landing-page .hc-metric .value.pos { color: var(--mint); }
         .landing-page .hc-metric .value.warn { color: var(--orange); }
         .landing-page .hc-verdict-side { background: var(--green); color: var(--paper); padding: 32px; text-align: center; border-radius: var(--r); position: relative; overflow: hidden; }
-        .landing-page .hc-verdict-side::before { content: 'ù LIVE'; position: absolute; top: 12px; right: 14px; font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; color: var(--yellow); opacity: 0.7; }
+        .landing-page .hc-verdict-side::before { content: '? LIVE'; position: absolute; top: 12px; right: 14px; font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; color: var(--yellow); opacity: 0.7; }
         .landing-page .hc-score { font-family: 'Instrument Serif', serif; font-style: italic; font-size: 84px; line-height: 1; letter-spacing: -0.04em; color: var(--yellow); margin-bottom: 0; }
         .landing-page .hc-score .denom { font-size: 28px; color: rgba(255, 255, 255, 0.5); font-style: normal; }
         .landing-page .hc-score-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255, 255, 255, 0.55); text-transform: uppercase; letter-spacing: 0.12em; margin: 4px 0 18px; }
@@ -2392,7 +2393,7 @@ function Landing({ onStart }) {
               <div className="hero-card-body">
                 <div>
                   <div className="hc-address">123 Sample Street, Mackay QLD</div>
-                  <div className="hc-specs">$595,000 ù 3 bed ù 2 bath ù 2 car ù 12 days on market</div>
+                  <div className="hc-specs">$595,000 ? 3 bed ? 2 bath ? 2 car ? 12 days on market</div>
                   <div className="hc-metric-grid">
                     <div className="hc-metric"><div className="label">Weekly cashflow</div><div className="value pos">+$57</div></div>
                     <div className="hc-metric"><div className="label">Gross yield</div><div className="value">4.5%</div></div>
@@ -2421,7 +2422,7 @@ function Landing({ onStart }) {
 
       <section id="why">
         <div className="container">
-          <div className="section-eyebrow">ù 01 ? The positioning</div>
+          <div className="section-eyebrow">? 01 ? The positioning</div>
           <h2 className="section-headline">Built for rentvestors. Not <span className="accent">boomers with buyer&apos;s agents.</span></h2>
           <p className="section-sub">You rent where you want to live and invest where the yields are. That decision deserves better than "this suburb grew 8% last year."</p>
           <div className="why-grid">
@@ -2434,14 +2435,14 @@ function Landing({ onStart }) {
 
       <section className="demo" id="demo">
         <div className="container">
-          <div className="section-eyebrow">ù 02 ? Live verdict</div>
+          <div className="section-eyebrow">? 02 ? Live verdict</div>
           <h2 className="section-headline">This is what you get ? <span className="accent">every time.</span></h2>
           <p className="section-sub">One property. One page. One decision. No 20-tab research sessions, no spreadsheets, no expensive reports.</p>
           <div className="verdict-doc">
-            <div className="vd-header"><span>ANALYSIS ù MKY-QLD-20260418-0832</span><span className="status">LIVE</span></div>
+            <div className="vd-header"><span>ANALYSIS ? MKY-QLD-20260418-0832</span><span className="status">LIVE</span></div>
             <div className="vd-body">
               <div className="vd-top">
-                <div><div className="vd-address">123 Sample Street,<br />Mackay QLD 4740</div><div className="vd-specs">$595,000 ù 3 bed / 2 bath / 2 car ù 12 days on market</div></div>
+                <div><div className="vd-address">123 Sample Street,<br />Mackay QLD 4740</div><div className="vd-specs">$595,000 ? 3 bed / 2 bath / 2 car ? 12 days on market</div></div>
                 <div className="vd-score-block"><div className="vd-score">7.8<span className="denom">/10</span></div><div className="vd-score-label">Strategy Fit Score</div><div className="vd-badge">NEGOTIATE</div></div>
               </div>
               <div className="vd-metrics">
@@ -2463,7 +2464,7 @@ function Landing({ onStart }) {
 
       <section id="features">
         <div className="container">
-          <div className="section-eyebrow">ù 03 ? The system</div>
+          <div className="section-eyebrow">? 03 ? The system</div>
           <h2 className="section-headline">Everything a rentvestor checks<br />before making an offer ? <span className="accent">automated.</span></h2>
           <p className="section-sub">Six pre-offer checks, delivered in one clean view. Nothing else to open.</p>
           <div className="features-grid">
@@ -2479,7 +2480,7 @@ function Landing({ onStart }) {
 
       <section className="compare">
         <div className="container">
-          <div className="section-eyebrow">ù 04 ? The difference</div>
+          <div className="section-eyebrow">? 04 ? The difference</div>
           <h2 className="section-headline">Why not just use <span className="accent">Domain?</span></h2>
           <p className="section-sub">The big platforms are great for browsing. Terrible for deciding. Here&apos;s what they won&apos;t tell you ? and what we will.</p>
           <div className="compare-table">
@@ -2497,19 +2498,19 @@ function Landing({ onStart }) {
 
       <section>
         <div className="container">
-          <div className="section-eyebrow">ù 05 ? The users</div>
+          <div className="section-eyebrow">? 05 ? The users</div>
           <h2 className="section-headline">Built by rentvestors, <span className="accent">for rentvestors.</span></h2>
           <div className="proof-grid">
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Saved me from a $40k mistake on a flood-zone property in Townsville. Paid for itself on first use.</div><div className="proof-author"><div className="proof-avatar">CH</div><div><div className="proof-name">Cam H.</div><div className="proof-role">RENTVESTOR ù SYDNEY</div></div></div></div>
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">I was ready to offer $610k. PropAI said walk away above $578k. Got it at $575k.</div><div className="proof-author"><div className="proof-avatar">SK</div><div><div className="proof-name">Sarah K.</div><div className="proof-role">RENTVESTOR ù MELBOURNE</div></div></div></div>
-            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Finally a tool that speaks rentvestor, not first-home buyer. The red flag scanner alone is worth $49.</div><div className="proof-author"><div className="proof-avatar">JT</div><div><div className="proof-name">James T.</div><div className="proof-role">RENTVESTOR ù BRISBANE</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Saved me from a $40k mistake on a flood-zone property in Townsville. Paid for itself on first use.</div><div className="proof-author"><div className="proof-avatar">CH</div><div><div className="proof-name">Cam H.</div><div className="proof-role">RENTVESTOR ? SYDNEY</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">I was ready to offer $610k. PropAI said walk away above $578k. Got it at $575k.</div><div className="proof-author"><div className="proof-avatar">SK</div><div><div className="proof-name">Sarah K.</div><div className="proof-role">RENTVESTOR ? MELBOURNE</div></div></div></div>
+            <div className="proof-card"><span className="proof-quote-mark">"</span><div className="proof-quote">Finally a tool that speaks rentvestor, not first-home buyer. The red flag scanner alone is worth $49.</div><div className="proof-author"><div className="proof-avatar">JT</div><div><div className="proof-name">James T.</div><div className="proof-role">RENTVESTOR ? BRISBANE</div></div></div></div>
           </div>
         </div>
       </section>
 
       <section id="pricing">
         <div className="container" style={{ textAlign: "center" }}>
-          <div className="section-eyebrow" style={{ margin: "0 auto 20px" }}>ù 06 ? The pricing</div>
+          <div className="section-eyebrow" style={{ margin: "0 auto 20px" }}>? 06 ? The pricing</div>
           <h2 className="section-headline" style={{ margin: "0 auto 24px" }}>Honest pricing. <span className="accent">No card to start.</span></h2>
           <p className="section-sub" style={{ margin: "0 auto" }}>Choose one report, a value pack, or unlimited access for active investors.</p>
           <div className="pricing-grid" style={{ textAlign: "left" }}>
@@ -2552,7 +2553,7 @@ function Landing({ onStart }) {
             <div className="footer-col"><h5>Company</h5><ul><li><a href="#">About</a></li><li><a href="#">Blog</a></li><li><a href="#">Contact</a></li></ul></div>
             <div className="footer-col"><h5>Legal</h5><ul><li><a href="#">Terms</a></li><li><a href="#">Privacy</a></li><li><a href="#">Disclaimer</a></li></ul></div>
           </div>
-          <div className="footer-bottom"><div>ù 2026 PropAI ? Australian Property Intelligence</div><div>Not financial advice ù Consult a broker + conveyancer</div></div>
+          <div className="footer-bottom"><div>? 2026 PropAI ? Australian Property Intelligence</div><div>Not financial advice ? Consult a broker + conveyancer</div></div>
         </div>
       </footer>
     </div>
@@ -2783,7 +2784,7 @@ export default function App() {
         break;
       }
     }
-    buildBrandedPdf(t, { compareMeta: last.compareMeta, userPrompt });
+    buildPdfReport(t, { compareMeta: last.compareMeta, userPrompt });
   }
 
   const showPdfDownload =
