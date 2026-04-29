@@ -206,7 +206,14 @@ function parsePropaiBearCase(text) {
   for (const line of lines) {
     const m = line.match(/^\*{0,2}([^:*]+?)\*{0,2}\s*[:\u2013\u2014-]\s*(.+)$/u);
     if (m) {
-      items.push({ title: m[1].trim(), body: m[2].trim() });
+      let title = m[1].trim();
+      let body = m[2].trim();
+      const nested = body.match(/^([^:]{2,80})\s*[:\u2013\u2014-]\s*(.+)$/u);
+      if (nested && /^(single|risk|issue)$/i.test(title)) {
+        title = nested[1].trim();
+        body = nested[2].trim();
+      }
+      items.push({ title, body });
     } else if (/^[-*\u2022]\s+/u.test(line)) {
       const body = line.replace(/^[-*\u2022]\s+/u, "").trim();
       if (body) items.push({ title: "Risk", body });
@@ -290,8 +297,35 @@ function parseNamedVerdict(text, suburbName) {
   return m ? m[1].toUpperCase() : "";
 }
 
-function buildCompareDataFromText() {
-  return null;
+function buildCompareDataFromText(text, title) {
+  const raw = String(text || "");
+  const parts = String(title || "").split(/\s+vs\s+/i);
+  const nameA = String(parts[0] || "").trim();
+  const nameB = String(parts[1] || "").trim();
+  if (!nameA || !nameB) return null;
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const read = (name, label, valuePattern) => {
+    const re = new RegExp(`${esc(name)}[^\\n]{0,140}?${label}[^\\n]{0,40}?(${valuePattern})`, "i");
+    const m = raw.match(re);
+    return m ? String(m[1]).trim() : "";
+  };
+  return {
+    suburb1: {
+      name: nameA,
+      score: read(nameA, "score", "\\d{1,3}(?:\\s*\\/\\s*100)?"),
+      yield: read(nameA, "yield", "\\d+(?:\\.\\d+)?%"),
+      growth: read(nameA, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%"),
+      verdict: read(nameA, "verdict", "BUY|HOLD|SKIP").toUpperCase()
+    },
+    suburb2: {
+      name: nameB,
+      score: read(nameB, "score", "\\d{1,3}(?:\\s*\\/\\s*100)?"),
+      yield: read(nameB, "yield", "\\d+(?:\\.\\d+)?%"),
+      growth: read(nameB, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%"),
+      verdict: read(nameB, "verdict", "BUY|HOLD|SKIP").toUpperCase()
+    },
+    winner: { name: "", reason: "" }
+  };
 }
 
 export function buildBrandedPdf(analysisText, options = {}) {
@@ -362,7 +396,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_MUTED);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.text("PROPAI  �  AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
+    doc.text("PROPAI - AUSTRALIAN PROPERTY INTELLIGENCE", MX, PH - 12, { charSpace: 0.4 });
     doc.setFont("times", "italic");
     doc.setFontSize(9);
     doc.text(String(pageRoman), PW - MX, PH - 12, { align: "right" });
@@ -546,6 +580,17 @@ export function buildBrandedPdf(analysisText, options = {}) {
           winner: jsonCompareData?.winner || { name: "", reason: "" }
         }
       : fallbackCompareData;
+  const globalYield = String(metricByLabel["rental yield"] || "").trim();
+  const globalGrowth = String(metricByLabel["capital growth"] || "").trim();
+  const globalScore = parsedScore != null ? `${parsedScore}` : "";
+  if (compareMeta) {
+    if (!effectiveCompareData.suburb1.score) effectiveCompareData.suburb1.score = globalScore;
+    if (!effectiveCompareData.suburb2.score) effectiveCompareData.suburb2.score = globalScore;
+    if (!effectiveCompareData.suburb1.yield) effectiveCompareData.suburb1.yield = globalYield;
+    if (!effectiveCompareData.suburb2.yield) effectiveCompareData.suburb2.yield = globalYield;
+    if (!effectiveCompareData.suburb1.growth) effectiveCompareData.suburb1.growth = globalGrowth;
+    if (!effectiveCompareData.suburb2.growth) effectiveCompareData.suburb2.growth = globalGrowth;
+  }
   const formatCompareScore = (v) => {
     if (v == null || v === "") return "Data unavailable";
     if (typeof v === "number") return `${v}/100`;
@@ -570,7 +615,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     const rightX = PW - MX;
     doc.text("CONFIDENTIAL REPORT", rightX, 20, { align: "right", charSpace: 0.6 });
     doc.text(today.toUpperCase(), rightX, 24, { align: "right", charSpace: 0.6 });
-    doc.text(`REF � ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
+    doc.text(`REF - ${refPrefix}-${postcode || "0000"}-001`, rightX, 28, { align: "right", charSpace: 0.6 });
     drawEyebrow("SUBURB INTELLIGENCE REPORT", MX, 102);
     const titleStr = compareMeta
       ? `${compareMeta.suburb1} vs ${compareMeta.suburb2},`
@@ -619,7 +664,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     setText(CREAM);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.text(`VERDICT  �  ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
+    doc.text(`VERDICT - ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
   };
 
   const drawExecSummary = () => {
@@ -814,11 +859,19 @@ export function buildBrandedPdf(analysisText, options = {}) {
     setText(PAPER);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
-    doc.text("FINAL CALL  �  ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
+    doc.text("FINAL CALL - ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
     doc.setFont("times", "normal");
     doc.setFontSize(17);
     const fcLines = doc.splitTextToSize(finalCallText.substring(0, 140), PW - 2 * MX - 20);
     doc.text(fcLines, MX + 10, 160);
+    setText(INK_SOFT);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    const waLines = doc.splitTextToSize(
+      "Targets 4-4.5% gross yield, preserving a cashflow buffer on a 20% deposit at current rates.",
+      PW - 2 * MX - 20
+    );
+    doc.text(waLines, MX + 10, 176);
     drawPageFoot("vi");
   };
 
