@@ -788,8 +788,8 @@ function extractReportTitle(analysisText) {
   }
 
   for (const line of head) {
-    if (/??/u.test(line) && /DEAL\s+ANALYSIS/i.test(line)) {
-      const t = cleanPdfTitle(line.replace(/^??\s*/u, ""));
+    if (/\u{1F3E0}/u.test(line) && /DEAL\s+ANALYSIS/i.test(line)) {
+      const t = cleanPdfTitle(line.replace(/^\u{1F3E0}\s*/u, ""));
       if (t) return t;
     }
     if (/^DEAL\s+ANALYSIS/i.test(stripMarkdownSymbols(line))) {
@@ -799,7 +799,7 @@ function extractReportTitle(analysisText) {
   }
 
   for (const line of head) {
-    if (/??/u.test(line) && /TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
+    if (/\u{1F525}/u.test(line) && /TODAY'?S\s+TOP\s+DEALS/i.test(line)) return "Today's top deals";
     if (/^TODAY'?S\s+TOP\s+DEALS/i.test(stripMarkdownSymbols(line))) return "Today's top deals";
   }
 
