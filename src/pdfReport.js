@@ -309,27 +309,19 @@ function buildCompareDataFromText(text, title) {
     const m = raw.match(re);
     return m ? String(m[1]).trim() : "";
   };
-  const pairFromVs = (label) => {
-    const re = new RegExp(`${label}[^\\n]{0,80}?\\(([+\\-]?\\d+(?:\\.\\d+)?%)\\s*vs\\s*([+\\-]?\\d+(?:\\.\\d+)?%)\\)`, "i");
-    const m = raw.match(re);
-    if (!m) return { a: "", b: "" };
-    return { a: m[1].trim(), b: m[2].trim() };
-  };
-  const yieldVs = pairFromVs("yield");
-  const growthVs = pairFromVs("growth");
   return {
     suburb1: {
       name: nameA,
       score: read(nameA, "score", "\\d{1,3}(?:\\s*\\/\\s*100)?"),
-      yield: read(nameA, "yield", "\\d+(?:\\.\\d+)?%") || yieldVs.a,
-      growth: read(nameA, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%") || growthVs.a,
+      yield: read(nameA, "yield", "\\d+(?:\\.\\d+)?%"),
+      growth: read(nameA, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%"),
       verdict: read(nameA, "verdict", "BUY|HOLD|SKIP").toUpperCase()
     },
     suburb2: {
       name: nameB,
       score: read(nameB, "score", "\\d{1,3}(?:\\s*\\/\\s*100)?"),
-      yield: read(nameB, "yield", "\\d+(?:\\.\\d+)?%") || yieldVs.b,
-      growth: read(nameB, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%") || growthVs.b,
+      yield: read(nameB, "yield", "\\d+(?:\\.\\d+)?%"),
+      growth: read(nameB, "growth", "[+\\-]?\\d+(?:\\.\\d+)?%"),
       verdict: read(nameB, "verdict", "BUY|HOLD|SKIP").toUpperCase()
     },
     winner: { name: "", reason: "" }
@@ -839,8 +831,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
       setText(INK_SOFT);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
-      const safeItem = String(item || "").replace(/\*\*(.+?)\*\*/g, "$1");
-      const bodyLines = doc.splitTextToSize(safeItem, PW - 2 * MX - 14);
+      const bodyLines = doc.splitTextToSize(String(item), PW - 2 * MX - 14);
       let by = workY + 4;
       bodyLines.slice(0, 4).forEach((line) => {
         doc.text(line, MX + 14, by, { maxWidth: PW - 2 * MX - 14 });
@@ -875,9 +866,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
       setText(INK_SOFT);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
-      const safeTitle = String(item.title || "Risk").replace(/\*\*(.+?)\*\*/g, "$1");
-      const safeBody = String(item.body || "").replace(/\*\*(.+?)\*\*/g, "$1");
-      const bearLine = `${safeTitle}: ${safeBody}`;
+      const bearLine = `${item.title || "Risk"}: ${item.body || ""}`;
       const bLines = doc.splitTextToSize(bearLine, PW - 2 * MX - 11);
       let fy = flagY + 6;
       bLines.slice(0, 3).forEach((line) => {
