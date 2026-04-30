@@ -4,6 +4,11 @@ import { jsPDF } from "jspdf";
  * ----------------------------------------------------------------------------
  * Single-file PDF builder. All parsing happens up front and produces clean
  * strings (no markdown, no asterisks). Draw functions trust their input.
+ *
+ * v2 — FIX: parsers tolerate emoji-prefixed/decorated headings, alt section
+ * names; bear case no longer drops legitimate items containing "insurance"
+ * or "interest"; compare table fills secondary suburb's metrics from
+ * combined-cell values like "Kirwan: $580K / Aitkenvale: $550K".
  * ========================================================================== */
 /* ---------- 1. UNIVERSAL TEXT SCRUBBER --------------------------------- */
 /* Run on EVERY parsed string before storage. After this point, no item in
@@ -122,175 +127,229 @@ function parsePropaiWalkaway(text) {
   const fallback = text.match(/\$[\d.,]+K?\s*[-\u2013\u2014]\s*\$[\d.,]+K?/i);
   return fallback ? fallback[0].trim() : null;
 }
-/* ---------- 5. SECTION FINDER (forgiving) ------------------------------ */
-/* Finds a section by heading keywords. Tolerant of:
- *   ## HEADING        # HEADING        ### HEADING
- *   **HEADING**       HEADING:         HEADING (on own line)
- * Returns the body of the section up to the next heading or PROPAI marker.   */
+/* ---------- 5. SECTION FINDER (line-based, emoji-tolerant) ------------- */
+/* Strip all decoration from a heading line and return the upper-case text. */
+function normalizeHeadingLine(line) {
+  let s = String(line || "");
+  s = s.replace(/^\s+/, "");
+  s = s.replace(/^#{1,6}\s*/, "");
+  s = s.replace(/\*\*/g, "");
+  s = s.replace(/[\u{1F000}-\u{1FFFF}]/gu, "");
+  s = s.replace(/[\u{2600}-\u{27BF}]/gu, "");
+  s = s.replace(/[^\x00-\x7F]/g, "");
+  s = s.replace(/[:\-\u2013\u2014]+\s*$/, "");
+  s = s.replace(/\s+/g, " ").trim();
+  return s.toUpperCase();
+}
+function isHeadingLikeLine(line) {
+  const t = String(line || "").trim();
+  if (!t) return false;
+  // Markdown ATX heading
+  if (/^#{1,6}\s+/.test(t)) return true;
+  // Bold-only line (e.g. "**METRICS SNAPSHOT**" or "**METRICS SNAPSHOT**:")
+  if (/^\*\*[^*\n]{2,80}\*\*\s*:?\s*$/.test(t)) return true;
+  // ALL-CAPS line on its own (no lowercase letters present)
+  const stripped = t.replace(/[^\x00-\x7F]/g, "").replace(/[*:\-\s]/g, "");
+  if (
+    stripped.length >= 4 &&
+    stripped.length <= 60 &&
+    stripped === stripped.toUpperCase() &&
+    /^[A-Z]/.test(stripped) &&
+    !/[a-z]/.test(t.replace(/[^A-Za-z]/g, ""))
+  ) {
+    return true;
+  }
+  return false;
+}
+/* New findSection: line-based. Tolerant to emojis, decoration, alt names. */
 function findSection(text, keywords) {
   const raw = String(text || "");
-  const kwAlt = keywords.map((k) => k.replace(/\s+/g, "\\s+")).join("|");
-  const headingRe = new RegExp(
-    `(?:^|\\n)\\s*(?:#{1,6}\\s*)?(?:\\*\\*\\s*)?(?:${kwAlt})(?:\\s*\\*\\*)?\\s*:?\\s*\\n([\\s\\S]*?)(?=\\n\\s*(?:#{1,6}\\s+|\\*\\*[A-Z][^*]{2,40}\\*\\*\\s*\\n)|\\[\\[PROPAI|$)`,
-    "i"
-  );
-  const m = raw.match(headingRe);
-  return m ? m[1].trim() : "";
+  const lines = raw.split("\n");
+  const kwUpper = keywords.map((k) => k.toUpperCase().replace(/\s+/g, " "));
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!isHeadingLikeLine(lines[i])) continue;
+    const norm = normalizeHeadingLine(lines[i]);
+    if (!norm) continue;
+    if (kwUpper.some((kw) => norm === kw || norm.includes(kw))) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx === -1) return "";
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (isHeadingLikeLine(lines[i])) { endIdx = i; break; }
+    if (lines[i].includes("[[PROPAI")) { endIdx = i; break; }
+  }
+  return lines.slice(startIdx + 1, endIdx).join("\n").trim();
 }
-/* ---------- 6. METRICS PARSER (forgiving) ------------------------------ */
-/* Accepts:
- *  - Markdown table:        | Metric | Value | Grade |
- *  - Pipe-separated lines:  Median Price | $580K | A
- *  - Bullet labelled lines: - Median Price: $580K (Strong)
- *  - "Label: Value" lines under the section
- * Returns up to 6 normalized metrics.                                      */
+/* ---------- 6. METRICS PARSER (with inline fallback) ------------------- */
+/* Last-resort: scan the WHOLE document for known metric labels even when no
+ * METRICS SNAPSHOT section is present (handles emoji-broken headings).    */
+function parsePropaiMetricsInline(text) {
+  const known = [
+    { label: "Median Price", aliases: ["median price", "median sale price", "median value", "median home price"] },
+    { label: "Rental Yield", aliases: ["rental yield", "gross yield", "yield"] },
+    { label: "Capital Growth", aliases: ["capital growth", "12m growth", "12 month growth", "annual growth", "yoy growth", "growth p.a."] },
+    { label: "Vacancy Rate", aliases: ["vacancy rate", "vacancy"] },
+    { label: "Days on Market", aliases: ["days on market", "dom", "average dom"] },
+    { label: "Stock on Market", aliases: ["stock on market", "som", "listings on market"] }
+  ];
+  const raw = String(text || "");
+  const out = [];
+  for (const m of known) {
+    let value = "";
+    for (const alias of m.aliases) {
+      const re = new RegExp(
+        `\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b\\s*[:\\-\\u2013\\u2014]?\\s*([^\\n|]{2,80}?)(?=[\\n|]|$)`,
+        "i"
+      );
+      const hit = raw.match(re);
+      if (hit) { value = scrub(hit[1]).replace(/\s*\(.*$/, "").trim(); break; }
+    }
+    if (value) out.push({ metric: m.label, value, grade: "" });
+  }
+  return out;
+}
 function parsePropaiMetrics(text) {
   const section = findSection(text, [
-    "METRICS SNAPSHOT",
-    "KEY METRICS SNAPSHOT",
-    "KEY METRICS",
-    "METRICS"
+    "METRICS SNAPSHOT", "KEY METRICS SNAPSHOT", "KEY METRICS", "METRICS",
+    "PROPERTY METRICS", "SUBURB METRICS", "PROPERTY SNAPSHOT",
+    "PROPERTY NUMBERS", "KEY NUMBERS", "THE NUMBERS", "SNAPSHOT"
   ]);
-  if (!section) return [];
   const rows = [];
-  const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    // Skip table separator and header rows
-    if (/^\|?\s*-+\s*\|/.test(line)) continue;
-    if (/\|\s*Metric\s*\|/i.test(line)) continue;
-    // Pipe-separated row (table or bare)
-    if (line.includes("|")) {
-      const cells = line.split("|").map((c) => scrub(c)).filter(Boolean);
-      if (cells.length >= 2) {
-        rows.push({
-          metric: cells[0],
-          value: cells[1] || "",
-          grade: cells[2] || ""
-        });
-        continue;
+  if (section) {
+    const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      // Skip table separator and header rows
+      if (/^\|?\s*-+\s*\|/.test(line)) continue;
+      if (/\|\s*Metric\s*\|/i.test(line)) continue;
+      // Pipe-separated row (table or bare)
+      if (line.includes("|")) {
+        const cells = line.split("|").map((c) => scrub(c)).filter(Boolean);
+        if (cells.length >= 2) {
+          rows.push({ metric: cells[0], value: cells[1] || "", grade: cells[2] || "" });
+          continue;
+        }
       }
-    }
-    // "Label: Value (Grade)" form, with optional bullet/bold prefix
-    const cleaned = scrub(line);
-    const labelMatch = cleaned.match(/^([A-Za-z][A-Za-z\s/&%()-]{2,40}?)\s*[:\-\u2013\u2014]\s*(.+)$/);
-    if (labelMatch) {
-      const label = labelMatch[1].trim();
-      const rest = labelMatch[2].trim();
-      // Try to split value vs grade by "(grade)" suffix
-      const gMatch = rest.match(/^(.+?)\s*[\(\[](Strong|Weak|Average|Good|Poor|Excellent|A|B|C|D|F|HIGH|MED|MEDIUM|LOW)[\)\]]/i);
-      if (gMatch) {
-        rows.push({ metric: label, value: gMatch[1].trim(), grade: gMatch[2] });
-      } else {
-        rows.push({ metric: label, value: rest, grade: "" });
+      // "Label: Value (Grade)" form, with optional bullet/bold prefix
+      const cleaned = scrub(line);
+      const labelMatch = cleaned.match(/^([A-Za-z][A-Za-z\s/&%()-]{2,40}?)\s*[:\-\u2013\u2014]\s*(.+)$/);
+      if (labelMatch) {
+        const label = labelMatch[1].trim();
+        const rest = labelMatch[2].trim();
+        const gMatch = rest.match(/^(.+?)\s*[\(\[](Strong|Weak|Average|Good|Poor|Excellent|A|B|C|D|F|HIGH|MED|MEDIUM|LOW)[\)\]]/i);
+        if (gMatch) rows.push({ metric: label, value: gMatch[1].trim(), grade: gMatch[2] });
+        else rows.push({ metric: label, value: rest, grade: "" });
       }
     }
   }
-  return rows;
+  if (rows.length >= 2) return rows;
+  // Fallback: scan whole doc for labelled metrics anywhere
+  const inline = parsePropaiMetricsInline(text);
+  return rows.length >= inline.length ? rows : inline;
 }
-/* ---------- 7. BULL CASE PARSER (forgiving) ---------------------------- */
-/* Accepts:
- *  - 1. Reason text                       (numbered)
- *  - - Reason text                        (bulleted)
- *  - **Bold title**: body text            (bold-prefixed)
- *  - Title: body text                     (label-prefixed)
- *  - Plain prose paragraph                (last resort)
- * All items are scrub()-ed before storage.                                 */
-function parsePropaiBullCase(text) {
-  const section = findSection(text, [
-    "BULL CASE",
-    "WHAT'S WORKING",
-    "WHATS WORKING",
-    "WHAT IS WORKING"
-  ]);
-  if (!section) return [];
+/* ---------- 7. BULL CASE PARSER (with inline fallback) ----------------- */
+function parsePropaiBullCaseInline(text) {
   const items = [];
-  const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    // Skip pure headings or dividers
-    if (/^[-=_]{3,}$/.test(line)) continue;
-    if (/^#{1,6}\s/.test(line)) continue;
-    // Strip bold wrapping anywhere on the line first
-    let normalized = line.replace(/\*\*\s*([^*]+?)\s*\*\*/g, "$1");
-    // Numbered: "1. ..." or "1) ..."
-    const numbered = normalized.match(/^\d+[.)]\s+(.+)$/);
-    if (numbered) {
-      const cleaned = scrub(numbered[1]);
-      if (cleaned) items.push(cleaned);
-      continue;
-    }
-    // Bulleted: "- ..." or "* ..." or "• ..."
-    const bulleted = normalized.match(/^[-*\u2022]\s+(.+)$/u);
-    if (bulleted) {
-      const cleaned = scrub(bulleted[1]);
-      if (cleaned) items.push(cleaned);
-      continue;
-    }
-    // Title: body  (with or without bold)
-    const labelled = normalized.match(/^([A-Za-z][A-Za-z0-9\s%()&/-]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
-    if (labelled) {
-      const title = scrub(labelled[1]);
-      const body = scrub(labelled[2]);
-      if (title && body) items.push(`${title}: ${body}`);
-      else if (body) items.push(body);
-      continue;
-    }
-    // Plain sentence (last resort - must look like a real sentence)
-    const cleaned = scrub(normalized);
-    if (cleaned.length > 20 && /[a-z]/.test(cleaned)) {
+  const raw = String(text || "");
+  const boldBullets = raw.match(/\*\*[A-Z][^*\n]{3,80}\*\*\s*[:\-\u2013\u2014]\s*[^\n]{10,300}/g) || [];
+  for (const m of boldBullets) {
+    const cleaned = scrub(m);
+    if (/(growth|yield|demand|premium|momentum|tailwind|opportunity|advantage|strength|booming|rising|expansion|infrastructure|amenity)/i.test(cleaned)) {
       items.push(cleaned);
     }
   }
-  return items.filter(Boolean);
+  return items.slice(0, 6);
 }
-/* ---------- 8. BEAR CASE PARSER (forgiving) ---------------------------- */
-/* Accepts the same shapes as bull case. Returns array of {title, body}.
- * Excludes generic mortgage/cashflow noise.                                */
-function parsePropaiBearCase(text) {
+function parsePropaiBullCase(text) {
   const section = findSection(text, [
-    "BEAR CASE",
-    "RED FLAGS",
-    "RISKS",
-    "WHAT COULD GO WRONG"
+    "BULL CASE", "WHAT'S WORKING", "WHATS WORKING", "WHAT IS WORKING",
+    "WHAT MAKES THIS WORK", "STRENGTHS", "OPPORTUNITY", "OPPORTUNITIES",
+    "TAILWINDS", "POSITIVES", "WHY IT WORKS"
   ]);
-  if (!section) return [];
   const items = [];
-  const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    if (/^[-=_]{3,}$/.test(line)) continue;
-    if (/^#{1,6}\s/.test(line)) continue;
-    let normalized = line.replace(/\*\*\s*([^*]+?)\s*\*\*/g, "$1");
-    // Strip leading list/number markers
-    normalized = normalized.replace(/^\d+[.)]\s+/, "");
-    normalized = normalized.replace(/^[-*\u2022]\s+/u, "");
-    // Title: body (with optional inner colon - "Risk: Single thing - actual desc")
-    const labelled = normalized.match(/^([A-Za-z][A-Za-z0-9\s%()&/-]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
-    if (labelled) {
-      let title = scrub(labelled[1]);
-      let body = scrub(labelled[2]);
-      // Unwrap nested generic prefix (e.g. "Risk: Employer Dependency: actual desc")
-      if (/^(single|risk|issue|concern|red flag)$/i.test(title)) {
-        const nested = body.match(/^([^:]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
-        if (nested) {
-          title = scrub(nested[1]);
-          body = scrub(nested[2]);
-        }
+  if (section) {
+    const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (/^[-=_]{3,}$/.test(line)) continue;
+      if (/^#{1,6}\s/.test(line)) continue;
+      let normalized = line.replace(/\*\*\s*([^*]+?)\s*\*\*/g, "$1");
+      const numbered = normalized.match(/^\d+[.)]\s+(.+)$/);
+      if (numbered) { const c = scrub(numbered[1]); if (c) items.push(c); continue; }
+      const bulleted = normalized.match(/^[-*\u2022]\s+(.+)$/u);
+      if (bulleted) { const c = scrub(bulleted[1]); if (c) items.push(c); continue; }
+      const labelled = normalized.match(/^([A-Za-z][A-Za-z0-9\s%()&/-]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
+      if (labelled) {
+        const title = scrub(labelled[1]); const body = scrub(labelled[2]);
+        if (title && body) items.push(`${title}: ${body}`);
+        else if (body) items.push(body);
+        continue;
       }
-      if (title && body) items.push({ title, body });
-      continue;
-    }
-    // Plain sentence as a "Risk"
-    const cleaned = scrub(normalized);
-    if (cleaned.length > 20 && /[a-z]/.test(cleaned)) {
-      items.push({ title: "Risk", body: cleaned });
+      const cleaned = scrub(normalized);
+      if (cleaned.length > 20 && /[a-z]/.test(cleaned)) items.push(cleaned);
     }
   }
-  // Filter mortgage/cashflow noise (those belong on exec summary)
-  return items.filter((item) => {
-    const combined = `${item.title} ${item.body}`.toLowerCase();
-    return !/(principal|interest|rates|insurance|strata|mortgage|repayments|rent\s*\$|cashflow)/i.test(combined);
-  });
+  if (items.filter(Boolean).length >= 1) return items.filter(Boolean);
+  return parsePropaiBullCaseInline(text);
 }
-/* ---------- 9. NAMED SECTION EXTRACTOR (executive summary, cashflow) --- */
+/* ---------- 8. BEAR CASE PARSER (surgical filter, inline fallback) ----- */
+function parsePropaiBearCaseInline(text) {
+  const items = [];
+  const raw = String(text || "");
+  const boldBullets = raw.match(/\*\*[A-Z][^*\n]{3,80}\*\*\s*[:\-\u2013\u2014]\s*[^\n]{10,300}/g) || [];
+  for (const m of boldBullets) {
+    const cleaned = scrub(m);
+    if (/(risk|hike|spike|downsizing|cyclone|flood|concentration|dependence|exposure|sensitivity|threat|vulnerability|hazard|decline|drop|pressure)/i.test(cleaned)) {
+      const parts = cleaned.match(/^([^:]{2,80}):\s*(.+)$/);
+      if (parts) items.push({ title: scrub(parts[1]), body: scrub(parts[2]) });
+      else items.push({ title: "Risk", body: cleaned });
+    }
+  }
+  return items.slice(0, 6);
+}
+function parsePropaiBearCase(text) {
+  const section = findSection(text, [
+    "BEAR CASE", "RED FLAGS", "RISKS", "WHAT COULD GO WRONG",
+    "WHAT COULD HURT YOU", "WHAT COULD HURT", "DOWNSIDE", "DOWNSIDES",
+    "WEAKNESSES", "HEADWINDS", "NEGATIVES", "WATCH OUTS", "WHY IT MIGHT FAIL"
+  ]);
+  const items = [];
+  if (section) {
+    const lines = section.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (/^[-=_]{3,}$/.test(line)) continue;
+      if (/^#{1,6}\s/.test(line)) continue;
+      let normalized = line.replace(/\*\*\s*([^*]+?)\s*\*\*/g, "$1");
+      normalized = normalized.replace(/^\d+[.)]\s+/, "");
+      normalized = normalized.replace(/^[-*\u2022]\s+/u, "");
+      const labelled = normalized.match(/^([A-Za-z][A-Za-z0-9\s%()&/-]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
+      if (labelled) {
+        let title = scrub(labelled[1]);
+        let body = scrub(labelled[2]);
+        if (/^(single|risk|issue|concern|red flag)$/i.test(title)) {
+          const nested = body.match(/^([^:]{2,80})\s*[:\-\u2013\u2014]\s*(.+)$/);
+          if (nested) { title = scrub(nested[1]); body = scrub(nested[2]); }
+        }
+        if (title && body) items.push({ title, body });
+        continue;
+      }
+      const cleaned = scrub(normalized);
+      if (cleaned.length > 20 && /[a-z]/.test(cleaned)) items.push({ title: "Risk", body: cleaned });
+    }
+  }
+  // SURGICAL filter: only drop items whose TITLE alone is a generic cashflow
+  // concept. Body content is no longer used for filtering, so legitimate
+  // bear cases like "Insurance Premium Hikes" or "Interest Rate Sensitivity"
+  // are kept.
+  const filtered = items.filter((item) => {
+    const t = String(item.title || "").toLowerCase().trim();
+    return !/^(mortgage|cashflow|principal|repayments|rent|interest)$/i.test(t);
+  });
+  if (filtered.length >= 1) return filtered;
+  return parsePropaiBearCaseInline(text);
+}/* ---------- 9. NAMED SECTION EXTRACTOR (executive summary, cashflow) --- */
 function extractSection(text, tag) {
   if (!text) return "";
   const re = new RegExp(`\\[\\[${tag}_START\\]\\]([\\s\\S]*?)\\[\\[${tag}_END\\]\\]`);
@@ -360,6 +419,22 @@ function extractSuburbName(analysisText, userPrompt) {
 function escRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+/* Parse a combined-cell value like "Kirwan: $580K / Aitkenvale: $550K" into
+ * { a, b } per suburb. Used as compare-table fallback.                     */
+function splitCombinedCell(value, suburbA, suburbB) {
+  const s = String(value || "").trim();
+  if (!s) return { a: "", b: "" };
+  const A = escRe(suburbA);
+  const B = escRe(suburbB);
+  const reA = new RegExp(`${A}\\s*[:\\-]?\\s*([^/|]+?)(?=\\s*\\/|\\s*${B}|$)`, "i");
+  const reB = new RegExp(`${B}\\s*[:\\-]?\\s*([^/|]+)`, "i");
+  const ma = s.match(reA);
+  const mb = s.match(reB);
+  return {
+    a: ma ? ma[1].trim().replace(/[/|].*$/, "").trim() : "",
+    b: mb ? mb[1].trim().replace(/[/|].*$/, "").trim() : ""
+  };
+}
 /* For each occurrence of `suburb` in `text`, return a local context window
  * that does NOT cross any mention of `excludeSuburb`. The window extends
  * from the previous excludeSuburb (or m.index - 30) to the next excludeSuburb
@@ -383,8 +458,6 @@ function getSuburbScopedContext(text, suburb, excludeSuburb, radius = 120) {
   while ((m = subRe.exec(raw)) !== null) {
     const matchEnd = m.index + m[0].length;
     // When excluding another suburb, only look FORWARD from this suburb's name.
-    // Looking backward risks including text that semantically belongs to the
-    // previous (excluded) suburb's clause.
     let start = excludeSuburb ? m.index : Math.max(0, m.index - 30);
     let end = Math.min(raw.length, matchEnd + radius);
     // Shrink end: don't cross the next excludeSuburb after matchEnd
@@ -413,7 +486,6 @@ function findMetricInContext(context, labelKeywords, valuePattern) {
   const reB = new RegExp(`(${valuePattern})[^\\n]{0,30}?(?:${labelRe})`, "i");
   const b = context.match(reB);
   if (b) return b[1].trim();
-  // No bare-value fallback: too easy to grab a neighbouring metric's number.
   return "";
 }
 function findSuburbScore(text, suburb, excludeSuburb) {
@@ -428,7 +500,14 @@ function findSuburbScore(text, suburb, excludeSuburb) {
 }
 function findSuburbYield(text, suburb, excludeSuburb) {
   const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 120);
-  return findMetricInContext(ctx, ["yield", "rental yield", "gross yield"], "\\d+(?:\\.\\d+)?%");
+  const found = findMetricInContext(ctx, ["yield", "rental yield", "gross yield"], "\\d+(?:\\.\\d+)?%");
+  if (found) return found;
+  // Fallback: percentage near suburb name (handles "Aitkenvale: 5.3%")
+  const raw = String(text || "");
+  const reBare = new RegExp(`${escRe(suburb)}[\\s:,\\-]+(\\d+(?:\\.\\d+)?%)`, "i");
+  const mb = raw.match(reBare);
+  if (mb) return mb[1].trim();
+  return "";
 }
 function findSuburbGrowth(text, suburb, excludeSuburb) {
   const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 120);
@@ -438,14 +517,13 @@ function findSuburbGrowth(text, suburb, excludeSuburb) {
     "[+\\-]?\\d+(?:\\.\\d+)?%"
   );
   if (labeled) return labeled;
-  /* Fallback A: "Aitkenvale (22.1%)" - parens immediately after suburb */
   const raw = String(text || "");
+  /* Fallback A: "Aitkenvale (22.1%)" - parens immediately after suburb */
   const reParen = new RegExp(`${escRe(suburb)}\\s*\\(([+\\-]?\\d+(?:\\.\\d+)?%)\\)`, "i");
   const mp = raw.match(reParen);
   if (mp) return mp[1].trim();
-  /* Fallback B: "Aitkenvale 22.2% annually" or "Aitkenvale 22.2%," - bare pct
-   * directly after suburb name (within 5 chars). Conventional for growth.   */
-  const reBare = new RegExp(`${escRe(suburb)}\\s+([+\\-]?\\d+(?:\\.\\d+)?%)`, "i");
+  /* Fallback B: "Aitkenvale: 22%" / "Aitkenvale 22%" / "Aitkenvale - 22%"  */
+  const reBare = new RegExp(`${escRe(suburb)}[\\s:,\\-]+([+\\-]?\\d+(?:\\.\\d+)?%)`, "i");
   const mb = raw.match(reBare);
   if (mb) return mb[1].trim();
   return "";
@@ -459,12 +537,15 @@ function findSuburbVerdict(text, suburb, excludeSuburb) {
     if (u === "AVOID" || u === "PASS") return "SKIP";
     return u;
   };
-  // Pattern A: VERDICT immediately before SUBURB (e.g. "BUY Kirwan", "HOLD Aitkenvale")
-  // This is the LLM's most common attribution and must beat the scoped-context match.
+  // Pattern A: VERDICT immediately before SUBURB (e.g. "BUY Kirwan")
   const reA = new RegExp(`\\b(BUY|HOLD|SKIP|NEGOTIATE|AVOID|WATCH|WAIT|PASS)\\s+${subRe}\\b`, "i");
   const a = raw.match(reA);
   if (a) return mapVerdict(a[1]);
-  // Pattern B: SUBURB ... VERDICT in tight scoped context (no other suburb in window)
+  // Pattern B: SUBURB followed by VERDICT (e.g. "Aitkenvale - SKIP")
+  const reC = new RegExp(`\\b${subRe}\\s*[:\\-,]?\\s*(BUY|HOLD|SKIP|NEGOTIATE|AVOID|WATCH|WAIT|PASS)\\b`, "i");
+  const c = raw.match(reC);
+  if (c) return mapVerdict(c[1]);
+  // Pattern C: scoped context window
   const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 40);
   const m = ctx.match(/\b(BUY|HOLD|SKIP|NEGOTIATE|AVOID|WATCH|WAIT|PASS)\b/i);
   if (m) return mapVerdict(m[1]);
@@ -504,8 +585,7 @@ function firstNonEmpty(...vals) {
     if (s) return v;
   }
   return "";
-}
-/* =========================================================================
+}/* =========================================================================
  *  MAIN PDF BUILDER
  * ======================================================================= */
 export function buildBrandedPdf(analysisText, options = {}) {
@@ -723,18 +803,30 @@ export function buildBrandedPdf(analysisText, options = {}) {
     const m = s.match(/[+\-]?\d+(?:\.\d+)?%/);
     return m ? m[0] : s;
   };
+  /* NEW: in compare mode, when a metric value contains both suburbs combined
+   * (e.g. "Kirwan: 5.25% / Aitkenvale: 5.3%"), split it per-suburb so we can
+   * populate the head-to-head table even if scoped-context extraction fails. */
+  const metricSplitFor = (labelKeyword, side /* "a" | "b" */) => {
+    if (!compareMeta) return "";
+    const row = metrics.find((m) =>
+      new RegExp(labelKeyword, "i").test(String(m.label || ""))
+    );
+    if (!row) return "";
+    const split = splitCombinedCell(row.value, compareNameA, compareNameB);
+    return side === "a" ? parsePercentish(split.a) : parsePercentish(split.b);
+  };
   const pickSuburbPrimary = (json, fromText, nameFallback) => ({
     name: firstNonEmpty(json?.name, fromText?.name, nameFallback) || nameFallback,
     score: firstNonEmpty(json?.score, fromText?.score, parsedScore != null ? `${parsedScore}` : ""),
-    yield: firstNonEmpty(json?.yield, fromText?.yield, parsePercentish(globalYield)),
-    growth: firstNonEmpty(json?.growth, fromText?.growth, parsePercentish(globalGrowth)),
+    yield: firstNonEmpty(json?.yield, fromText?.yield, metricSplitFor("yield", "a"), parsePercentish(globalYield)),
+    growth: firstNonEmpty(json?.growth, fromText?.growth, metricSplitFor("growth", "a"), parsePercentish(globalGrowth)),
     verdict: firstNonEmpty(json?.verdict, fromText?.verdict, verdict)
   });
   const pickSuburbSecondary = (json, fromText, nameFallback) => ({
     name: firstNonEmpty(json?.name, fromText?.name, nameFallback) || nameFallback,
     score: firstNonEmpty(json?.score, fromText?.score, ""),
-    yield: firstNonEmpty(json?.yield, fromText?.yield, ""),
-    growth: firstNonEmpty(json?.growth, fromText?.growth, ""),
+    yield: firstNonEmpty(json?.yield, fromText?.yield, metricSplitFor("yield", "b")),
+    growth: firstNonEmpty(json?.growth, fromText?.growth, metricSplitFor("growth", "b")),
     verdict: firstNonEmpty(json?.verdict, fromText?.verdict, "")
   });
   const effectiveCompareData = compareMeta
@@ -760,7 +852,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     ? `A rentvestor's analysis of ${compareMeta.suburb1} vs ${compareMeta.suburb2}, prepared by PropAI. Deal Score, Walk-Away Number, and full negotiation strategy inside.`
     : `A rentvestor's analysis of ${suburbName}, prepared by PropAI. Deal Score, Walk-Away Number, and full negotiation strategy inside.`;
   /* =========================================================================
-   *  PAGE 1 — COVER
+   *  PAGE 1 - COVER
    * ======================================================================= */
   const drawCover = () => {
     paintBg(CREAM);
@@ -828,7 +920,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     doc.text(`VERDICT - ${verdict}`, pillX + 12, pillY + 7.5, { charSpace: 1 });
   };
   /* =========================================================================
-   *  PAGE 2 — EXECUTIVE SUMMARY
+   *  PAGE 2 - EXECUTIVE SUMMARY
    * ======================================================================= */
   const drawExecSummary = () => {
     paintBg(PAPER);
@@ -891,7 +983,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     drawPageFoot("ii");
   };
   /* =========================================================================
-   *  PAGE 3 — METRICS
+   *  PAGE 3 - METRICS
    * ======================================================================= */
   const drawMetrics = () => {
     paintBg(PAPER);
@@ -953,7 +1045,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     drawPageFoot("iii");
   };
   /* =========================================================================
-   *  PAGE 4 — BULL CASE
+   *  PAGE 4 - BULL CASE
    * ======================================================================= */
   const drawWhatsWorking = () => {
     paintBg(PAPER);
@@ -996,7 +1088,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     drawPageFoot("iv");
   };
   /* =========================================================================
-   *  PAGE 5 — BEAR CASE
+   *  PAGE 5 - BEAR CASE
    * ======================================================================= */
   const drawRedFlags = () => {
     paintBg(PAPER);
@@ -1037,7 +1129,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     drawPageFoot("v");
   };
   /* =========================================================================
-   *  PAGE 6 — WALK-AWAY
+   *  PAGE 6 - WALK-AWAY
    * ======================================================================= */
   const drawWalkAway = () => {
     paintBg(PAPER);
@@ -1086,7 +1178,7 @@ export function buildBrandedPdf(analysisText, options = {}) {
     drawPageFoot("vi");
   };
   /* =========================================================================
-   *  PAGE 7 — HEAD-TO-HEAD (compare mode only)
+   *  PAGE 7 - HEAD-TO-HEAD (compare mode only)
    * ======================================================================= */
   const drawCompareHeadToHead = () => {
     paintBg(PAPER);
