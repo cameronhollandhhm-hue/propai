@@ -589,7 +589,7 @@ function firstNonEmpty(...vals) {
  *  MAIN PDF BUILDER
  * ======================================================================= */
 export function buildBrandedPdf(analysisText, options = {}) {
-  const compareMeta = options.compareMeta;
+  const compareMeta = options.compareMeta;console.log("PROPAI_LLM_OUTPUT_START\n" + analysisText + "\nPROPAI_LLM_OUTPUT_END");
   const cashflowBody = extractSection(analysisText, "CASHFLOW");
   const src = stripPdfThinkingPreamble(stripPropaiCompareBlock(analysisText));
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
