@@ -276,8 +276,8 @@ function firstNonEmptyCompareValue(...vals) {
 function parseNamedValueFromCombinedField(fieldValue, suburbA, suburbB) {
   const raw = String(fieldValue || "");
   const out = { a: "", b: "" };
-  const reA = new RegExp(`${suburbA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-]\\s*([^|]+)`, "i");
-  const reB = new RegExp(`${suburbB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-]\\s*([^|]+)`, "i");
+  const reA = new RegExp(`${suburbA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-]\\s*([^|\\n]+)`, "i");
+  const reB = new RegExp(`${suburbB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-]\\s*([^|\\n]+)`, "i");
   const a = raw.match(reA);
   const b = raw.match(reB);
   if (a) out.a = a[1].trim();
@@ -286,7 +286,7 @@ function parseNamedValueFromCombinedField(fieldValue, suburbA, suburbB) {
 }
 
 function parseNamedScore(text, suburbName) {
-  const re = new RegExp(`${suburbName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]{0,80}?(\\d{1,3})\\s*\\/\\s*100`, "i");
+  const re = new RegExp(`${suburbName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]{0,160}?(\\d{1,3})\\s*\\/\\s*100`, "i");
   const m = String(text || "").match(re);
   return m ? m[1] : "";
 }
@@ -453,7 +453,15 @@ export function buildBrandedPdf(analysisText, options = {}) {
   const scoreMax = "100";
   const scorePct = parsedScore != null ? Math.min(1, parsedScore / 100) : 0;
   const parsedVerdict = parsePropaiVerdict(analysisText);
-  const verdict = parsedVerdict || "Data unavailable";
+  const verdict = (() => {
+    if (parsedScore != null) {
+      if (parsedScore >= 70) return "BUY";
+      if (parsedScore >= 50) return "HOLD";
+      return "SKIP";
+    }
+    if (parsedVerdict === "BUY" || parsedVerdict === "HOLD" || parsedVerdict === "SKIP") return parsedVerdict;
+    return "Data unavailable";
+  })();
   const walkAway = parsePropaiWalkaway(analysisText);
   const thesisMatch = src.match(/(?:^|\n\n)([A-Z][^\n]{40,200}[.!])/);
   const thesis = thesisMatch ? clean(thesisMatch[1]) : `A rentvestor-grade analysis of ${suburbName}.`;
@@ -489,12 +497,29 @@ export function buildBrandedPdf(analysisText, options = {}) {
   }
 
   const workingItems = parsePropaiBullCase(analysisText).map((x) => String(x || "").trim()).filter(Boolean);
-  const flagItems = parsePropaiBearCase(analysisText).filter((item) => {
+  let flagItems = parsePropaiBearCase(analysisText).filter((item) => {
     const title = String(item?.title || "").toLowerCase();
     const body = String(item?.body || "").toLowerCase();
     const combined = `${title} ${body}`;
     return !/(principal|interest|rates|insurance|strata|mortgage|repayments|rent\s*\$|cashflow)/i.test(combined);
   });
+  if (!flagItems.length) {
+    const bearSection = String(src.match(/##\s*BEAR CASE\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i)?.[1] || "");
+    const backup = bearSection
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.replace(/^\d+[.)]\s+/, "").replace(/^[-*\u2022]\s+/u, ""))
+      .map((l) => {
+        const m = l.match(/^([^:]{2,80})\s*[:\u2013\u2014-]\s*(.+)$/u);
+        return m ? { title: m[1].trim(), body: m[2].trim() } : { title: "Risk", body: l };
+      })
+      .filter((item) => {
+        const combined = `${item.title} ${item.body}`.toLowerCase();
+        return !/(principal|interest|rates|insurance|strata|mortgage|repayments|rent\s*\$|cashflow)/i.test(combined);
+      });
+    flagItems = backup;
+  }
   const compareBlockParsed = parsePropaiCompareBlock(analysisText);
 
   if (!compareMeta) {
@@ -583,13 +608,18 @@ export function buildBrandedPdf(analysisText, options = {}) {
   const globalYield = String(metricByLabel["rental yield"] || "").trim();
   const globalGrowth = String(metricByLabel["capital growth"] || "").trim();
   const globalScore = parsedScore != null ? `${parsedScore}` : "";
+  const parsePercentish = (v) => {
+    const s = String(v || "").trim();
+    const m = s.match(/[+\-]?\d+(?:\.\d+)?%/);
+    return m ? m[0] : s;
+  };
   if (compareMeta) {
     if (!effectiveCompareData.suburb1.score) effectiveCompareData.suburb1.score = globalScore;
     if (!effectiveCompareData.suburb2.score) effectiveCompareData.suburb2.score = globalScore;
-    if (!effectiveCompareData.suburb1.yield) effectiveCompareData.suburb1.yield = globalYield;
-    if (!effectiveCompareData.suburb2.yield) effectiveCompareData.suburb2.yield = globalYield;
-    if (!effectiveCompareData.suburb1.growth) effectiveCompareData.suburb1.growth = globalGrowth;
-    if (!effectiveCompareData.suburb2.growth) effectiveCompareData.suburb2.growth = globalGrowth;
+    if (!effectiveCompareData.suburb1.yield) effectiveCompareData.suburb1.yield = parsePercentish(globalYield);
+    if (!effectiveCompareData.suburb2.yield) effectiveCompareData.suburb2.yield = parsePercentish(globalYield);
+    if (!effectiveCompareData.suburb1.growth) effectiveCompareData.suburb1.growth = parsePercentish(globalGrowth);
+    if (!effectiveCompareData.suburb2.growth) effectiveCompareData.suburb2.growth = parsePercentish(globalGrowth);
   }
   const formatCompareScore = (v) => {
     if (v == null || v === "") return "Data unavailable";
@@ -676,7 +706,9 @@ export function buildBrandedPdf(analysisText, options = {}) {
     setText(INK_SOFT);
     doc.setFont("times", "italic");
     doc.setFontSize(13);
-    const thLines = doc.splitTextToSize(thesis, PW - 2 * MX - 20);
+    const execBlock = String(src.match(/##\s*EXECUTIVE SUMMARY\s*([\s\S]*?)(?=##\s|\[\[PROPAI|$)/i)?.[1] || "").trim();
+    const fullThesis = clean(stripMarkdownSymbols(execBlock || thesis));
+    const thLines = doc.splitTextToSize(fullThesis, PW - 2 * MX - 20);
     doc.text(thLines, MX, 88);
     const gridTop = 106;
     const gridH = 44;
@@ -758,9 +790,19 @@ export function buildBrandedPdf(analysisText, options = {}) {
       doc.text(metric.label.toUpperCase(), x + 5, y + 7, { charSpace: 0.6 });
       setText(isFeature ? CREAM : INK);
       doc.setFont("times", "normal");
-      const valueStr = String(metric.value || "Data unavailable");
-      doc.setFontSize(valueStr.length > 20 ? 14 : 20);
-      doc.text(valueStr.substring(0, 18), x + 5, y + 20);
+      const valueStr = String(metric.value || "Data unavailable").trim();
+      const parts = valueStr.match(/^([^\s(]+)\s*(.*)$/);
+      const mainVal = parts ? parts[1] : valueStr;
+      const subVal = parts ? parts[2].replace(/^\((.*)\)$/, "$1").trim() : "";
+      doc.setFontSize(mainVal.length > 12 ? 16 : 20);
+      doc.text(mainVal, x + 5, y + 20);
+      if (subVal) {
+        setText(isFeature ? [220, 215, 200] : INK_MUTED);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        const sub = doc.splitTextToSize(subVal, cardW - 10);
+        doc.text(sub.slice(0, 1), x + 5, y + 27);
+      }
     });
     drawPageFoot("iii");
   };
