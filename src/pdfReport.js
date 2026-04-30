@@ -432,25 +432,43 @@ function findSuburbYield(text, suburb, excludeSuburb) {
 }
 function findSuburbGrowth(text, suburb, excludeSuburb) {
   const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 120);
-  const labeled = findMetricInContext(ctx, ["growth", "capital growth", "12m growth", "annual growth"], "[+\\-]?\\d+(?:\\.\\d+)?%");
+  const labeled = findMetricInContext(
+    ctx,
+    ["growth", "capital growth", "12m growth", "annual growth", "annually", "p.a.", "yoy", "year on year"],
+    "[+\\-]?\\d+(?:\\.\\d+)?%"
+  );
   if (labeled) return labeled;
-  /* Fallback for growth: LLM often writes "Aitkenvale (22.1%)" without
-   * a "growth" keyword nearby. The parenthetical % directly after the
-   * suburb name is conventional shorthand for capital growth.            */
+  /* Fallback A: "Aitkenvale (22.1%)" - parens immediately after suburb */
   const raw = String(text || "");
-  const subRe = new RegExp(`${escRe(suburb)}\\s*\\(([+\\-]?\\d+(?:\\.\\d+)?%)\\)`, "i");
-  const m = raw.match(subRe);
-  if (m) return m[1].trim();
+  const reParen = new RegExp(`${escRe(suburb)}\\s*\\(([+\\-]?\\d+(?:\\.\\d+)?%)\\)`, "i");
+  const mp = raw.match(reParen);
+  if (mp) return mp[1].trim();
+  /* Fallback B: "Aitkenvale 22.2% annually" or "Aitkenvale 22.2%," - bare pct
+   * directly after suburb name (within 5 chars). Conventional for growth.   */
+  const reBare = new RegExp(`${escRe(suburb)}\\s+([+\\-]?\\d+(?:\\.\\d+)?%)`, "i");
+  const mb = raw.match(reBare);
+  if (mb) return mb[1].trim();
   return "";
 }
 function findSuburbVerdict(text, suburb, excludeSuburb) {
-  const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 150);
+  const raw = String(text || "");
+  const subRe = escRe(suburb);
+  const mapVerdict = (v) => {
+    const u = v.toUpperCase();
+    if (u === "WATCH" || u === "WAIT" || u === "NEGOTIATE") return "HOLD";
+    if (u === "AVOID" || u === "PASS") return "SKIP";
+    return u;
+  };
+  // Pattern A: VERDICT immediately before SUBURB (e.g. "BUY Kirwan", "HOLD Aitkenvale")
+  // This is the LLM's most common attribution and must beat the scoped-context match.
+  const reA = new RegExp(`\\b(BUY|HOLD|SKIP|NEGOTIATE|AVOID|WATCH|WAIT|PASS)\\s+${subRe}\\b`, "i");
+  const a = raw.match(reA);
+  if (a) return mapVerdict(a[1]);
+  // Pattern B: SUBURB ... VERDICT in tight scoped context (no other suburb in window)
+  const ctx = getSuburbScopedContext(text, suburb, excludeSuburb, 40);
   const m = ctx.match(/\b(BUY|HOLD|SKIP|NEGOTIATE|AVOID|WATCH|WAIT|PASS)\b/i);
-  if (!m) return "";
-  const v = m[1].toUpperCase();
-  if (v === "WATCH" || v === "WAIT" || v === "NEGOTIATE") return "HOLD";
-  if (v === "AVOID" || v === "PASS") return "SKIP";
-  return v;
+  if (m) return mapVerdict(m[1]);
+  return "";
 }
 function buildCompareDataFromText(text, suburbA, suburbB) {
   if (!suburbA || !suburbB) return null;
@@ -908,12 +926,22 @@ export function buildBrandedPdf(analysisText, options = {}) {
       setText(isFeature ? CREAM : INK);
       doc.setFont("times", "normal");
       const valueStr = clean(metric.value || "Data unavailable").trim() || "Data unavailable";
-      // Split value into main + sub: "$580K (median)" -> main "$580K", sub "median"
-      const parts = valueStr.match(/^([^\s(]+)\s*(.*)$/);
-      const mainVal = parts ? parts[1] : valueStr;
-      const subVal = parts ? parts[2].replace(/^\((.*)\)$/, "$1").trim() : "";
-      doc.setFontSize(mainVal.length > 12 ? 14 : mainVal.length > 8 ? 17 : 20);
-      doc.text(mainVal.slice(0, 18), x + 5, y + 20);
+      // Detect combined compare-mode value: "Kirwan: $571K / Aitkenvale: $550K-$681K"
+      // Take the FIRST suburb's value as the headline; second goes to subtext.
+      let mainVal, subVal;
+      const slashSplit = valueStr.split(/\s*\/\s*/);
+      if (slashSplit.length >= 2 && /^[A-Za-z][A-Za-z\s'-]{1,30}:/.test(slashSplit[0])) {
+        // Strip "Suburb:" prefix from first segment for the headline
+        mainVal = slashSplit[0].replace(/^[A-Za-z][A-Za-z\s'-]{1,30}:\s*/, "").trim();
+        subVal = slashSplit.slice(1).join(" / ").trim();
+      } else {
+        // Single-suburb format: "$580K (median)" or just "$580K"
+        const parts = valueStr.match(/^([^\s(]+)\s*(.*)$/);
+        mainVal = parts ? parts[1] : valueStr;
+        subVal = parts ? parts[2].replace(/^\((.*)\)$/, "$1").trim() : "";
+      }
+      doc.setFontSize(mainVal.length > 14 ? 13 : mainVal.length > 10 ? 16 : mainVal.length > 7 ? 18 : 20);
+      doc.text(mainVal.slice(0, 22), x + 5, y + 20);
       if (subVal) {
         setText(isFeature ? [220, 215, 200] : INK_MUTED);
         doc.setFont("helvetica", "normal");
@@ -937,7 +965,8 @@ export function buildBrandedPdf(analysisText, options = {}) {
     const listStart = 88;
     const items = workingItems.slice(0, 6);
     const nWork = Math.max(items.length, 1);
-    const slotH = (contentBottom - listStart) / nWork;
+    // Cap slot height so 1-2 items don't get spaced absurdly far apart
+    const slotH = Math.min(36, (contentBottom - listStart) / nWork);
     items.forEach((item, i) => {
       const workY = listStart + i * slotH;
       const num = String(i + 1).padStart(2, "0");
@@ -979,7 +1008,8 @@ export function buildBrandedPdf(analysisText, options = {}) {
     const flagListStart = 86;
     const items = flagItems.slice(0, 6);
     const nFlags = Math.max(items.length, 1);
-    const flagSlotH = (flagContentBottom - flagListStart) / nFlags;
+    // Cap slot height so 1-2 risks don't get spaced absurdly far apart
+    const flagSlotH = Math.min(40, (flagContentBottom - flagListStart) / nFlags);
     items.forEach((item, i) => {
       const flagY = flagListStart + i * flagSlotH;
       setFill([251, 238, 235]);
@@ -1038,12 +1068,12 @@ export function buildBrandedPdf(analysisText, options = {}) {
     doc.text("FINAL CALL - ACTIONABLE", MX + 10, 148, { charSpace: 0.9 });
     setText(CREAM);
     doc.setFont("times", "normal");
-    doc.setFontSize(15);
-    const fcLines = doc.splitTextToSize(clean(finalCallText).substring(0, 200), PW - 2 * MX - 20);
+    doc.setFontSize(14);
+    const fcLines = doc.splitTextToSize(clean(finalCallText).substring(0, 280), PW - 2 * MX - 20);
     let fy = 158;
-    fcLines.slice(0, 2).forEach((l) => {
+    fcLines.slice(0, 3).forEach((l) => {
       doc.text(l, MX + 10, fy);
-      fy += 6;
+      fy += 5.5;
     });
     setText(INK_SOFT);
     doc.setFont("helvetica", "normal");
@@ -1067,10 +1097,14 @@ export function buildBrandedPdf(analysisText, options = {}) {
     const data = effectiveCompareData;
     const s1 = data?.suburb1;
     const s2 = data?.suburb2;
-    const valueOrUnavailable = (v) => {
-      if (v == null) return "Data unavailable";
+    const valueOrDash = (v) => {
+      if (v == null) return "-";
       const s = String(v).trim();
-      return s ? s : "Data unavailable";
+      return s ? s : "-";
+    };
+    const formatCompareScoreOrDash = (v) => {
+      if (v == null || v === "") return "-";
+      return formatCompareScore(v);
     };
     const win = normalizeCompareWinner(data || {});
     const n1 = clean(String(s1?.name || compareMeta?.suburb1 || "Suburb A"));
@@ -1081,10 +1115,10 @@ export function buildBrandedPdf(analysisText, options = {}) {
     doc.text(n1, MX, 92);
     doc.text(n2, MX + (PW - 2 * MX) / 2 + 2, 92);
     const rows = [
-      { label: "SCORE", a: formatCompareScore(s1?.score), b: formatCompareScore(s2?.score) },
-      { label: "YIELD", a: clean(valueOrUnavailable(s1?.yield)), b: clean(valueOrUnavailable(s2?.yield)) },
-      { label: "GROWTH", a: clean(valueOrUnavailable(s1?.growth)), b: clean(valueOrUnavailable(s2?.growth)) },
-      { label: "VERDICT", a: clean(valueOrUnavailable(s1?.verdict)), b: clean(valueOrUnavailable(s2?.verdict)) }
+      { label: "SCORE", a: formatCompareScoreOrDash(s1?.score), b: formatCompareScoreOrDash(s2?.score) },
+      { label: "YIELD", a: clean(valueOrDash(s1?.yield)), b: clean(valueOrDash(s2?.yield)) },
+      { label: "GROWTH", a: clean(valueOrDash(s1?.growth)), b: clean(valueOrDash(s2?.growth)) },
+      { label: "VERDICT", a: clean(valueOrDash(s1?.verdict)), b: clean(valueOrDash(s2?.verdict)) }
     ];
     let cy = 100;
     const half = (PW - 2 * MX - 4) / 2;
